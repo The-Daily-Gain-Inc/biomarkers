@@ -16,12 +16,6 @@ final class RenphoClient {
     static let fieldMap: [(field: String, key: String)] = [
         ("bodyfat", "rp_bodyfat"),
         ("weight", "rp_weight"),
-        ("muscle", "rp_muscle"),
-        ("water", "rp_water"),
-        ("visfat", "rp_visfat"),
-        ("bmi", "rp_bmi"),
-        ("bmr", "rp_bmr"),
-        ("bone", "rp_bone"),
     ]
 
     init(session: RenphoSession) {

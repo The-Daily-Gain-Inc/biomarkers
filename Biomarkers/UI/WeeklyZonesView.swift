@@ -12,7 +12,18 @@ struct WeeklyZonesView: View {
     @Environment(\.colorScheme) private var scheme
     @AppStorage("backfillMonths") private var backfillMonths = 6
     @Query(sort: \CachedActivity.startDate, order: .reverse) private var activities: [CachedActivity]
+    @Query private var sleepMetrics: [DailyMetric]
     @State private var weekOffset = 0
+
+    /// The most recent night's sleep-stage minutes (deep, light, rem, awake).
+    private var latestSleepStages: (date: Date, minutes: [Double])? {
+        let byDay = Dictionary(grouping: sleepMetrics.filter { SleepPalette.keys.contains($0.metricKey) },
+                               by: { $0.day })
+        guard let day = byDay.keys.max() else { return nil }
+        let rows = byDay[day] ?? []
+        let minutes = SleepPalette.keys.map { key in rows.first { $0.metricKey == key }?.value ?? 0 }
+        return minutes.reduce(0, +) > 0 ? (day, minutes) : nil
+    }
 
     private var calendar: Calendar {
         var cal = Calendar(identifier: .iso8601)
@@ -72,6 +83,14 @@ struct WeeklyZonesView: View {
                     Text("Time in Zone")
                 }
                 Section {
+                    sleepStageChart
+                        .listRowSeparator(.hidden)
+                    sleepLegend
+                        .listRowSeparator(.hidden)
+                } header: {
+                    Text("Sleep Stages")
+                }
+                Section {
                     if weekActivities.isEmpty {
                         Text("No activities this week")
                             .foregroundStyle(.secondary)
@@ -126,6 +145,53 @@ struct WeeklyZonesView: View {
                     .padding(.vertical, 24)
             }
         }
+    }
+
+    /// Last night's sleep stages as a horizontal bar chart, mirroring the
+    /// activity zone chart.
+    private var sleepStageChart: some View {
+        Group {
+            if let stages = latestSleepStages {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(stages.date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
+                        .font(.caption).foregroundStyle(.secondary)
+                    Chart(Array(stages.minutes.enumerated()), id: \.offset) { item in
+                        BarMark(
+                            x: .value("Minutes", item.element),
+                            y: .value("Stage", SleepPalette.labels[item.offset])
+                        )
+                        .foregroundStyle(SleepPalette.color(index: item.offset, scheme: scheme))
+                        .cornerRadius(4)
+                        .annotation(position: .trailing, alignment: .leading) {
+                            Text(formatDuration(item.element * 60))
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                    .chartXAxis(.hidden)
+                    .chartYAxis { AxisMarks { _ in AxisValueLabel() } }
+                    .frame(height: 150)
+                }
+            } else {
+                Text("No sleep data yet — connect Oura and sync")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 20)
+            }
+        }
+    }
+
+    private var sleepLegend: some View {
+        HStack(spacing: 14) {
+            ForEach(0..<4, id: \.self) { i in
+                HStack(spacing: 4) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(SleepPalette.color(index: i, scheme: scheme))
+                        .frame(width: 10, height: 10)
+                    Text(SleepPalette.labels[i]).font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private var zoneLegend: some View {

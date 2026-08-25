@@ -25,9 +25,7 @@ struct TrendsView: View {
         "load": true, "rhr": false, "stress": false, "steps": true,
         "o_hrv": true, "o_stress": false, "o_activity": true, "spo2": true,
         "years": true, "sleep_score": true, "sleep_hours": true,
-        "rp_bodyfat": false, "rp_weight": false, "rp_muscle": true,
-        "rp_water": true, "rp_visfat": false, "rp_bmi": false,
-        "rp_bmr": true, "rp_bone": true,
+        "rp_bodyfat": false, "rp_weight": false,
         "glucose": false, "bp_sys": false, "bp_dia": false, "ear": true,
         "porn": false, "reading": true, "meditation": true,
     ]

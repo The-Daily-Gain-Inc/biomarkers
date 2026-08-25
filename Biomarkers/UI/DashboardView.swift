@@ -40,6 +40,9 @@ struct DashboardView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal)
                 }
+                TodayCard()
+                    .padding(.horizontal)
+                    .padding(.bottom, 4)
                 ProfileCard()
                     .padding(.horizontal)
                     .padding(.bottom, 4)
@@ -109,6 +112,42 @@ struct ConnectBanner: View {
         .padding(10)
         .background(.yellow.opacity(0.15), in: RoundedRectangle(cornerRadius: 10))
         .padding(.horizontal)
+    }
+}
+
+/// "Today" — the three headline recovery metrics (latest cached values):
+/// HRV, resting HR, and last night's sleep.
+struct TodayCard: View {
+    @Query(filter: #Predicate<DailyMetric> { $0.metricKey == "o_hrv" },
+           sort: \DailyMetric.day, order: .reverse) private var hrv: [DailyMetric]
+    @Query(filter: #Predicate<DailyMetric> { $0.metricKey == "rhr" },
+           sort: \DailyMetric.day, order: .reverse) private var rhr: [DailyMetric]
+    @Query(filter: #Predicate<DailyMetric> { $0.metricKey == "sleep_hours" },
+           sort: \DailyMetric.day, order: .reverse) private var sleep: [DailyMetric]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Today").font(.headline)
+            HStack(spacing: 12) {
+                stat("HRV", hrv.first.map { "\(Int($0.value))" }, "ms")
+                stat("Resting HR", rhr.first.map { "\(Int($0.value))" }, "bpm")
+                stat("Sleep", sleep.first.map { String(format: "%.1f", $0.value) }, "h")
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func stat(_ title: String, _ value: String?, _ unit: String) -> some View {
+        VStack(spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(value ?? "—").font(.system(.title2, design: .rounded, weight: .semibold))
+                if value != nil { Text(unit).font(.caption2).foregroundStyle(.secondary) }
+            }
+            Text(LocalizedStringKey(title)).font(.caption2).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 

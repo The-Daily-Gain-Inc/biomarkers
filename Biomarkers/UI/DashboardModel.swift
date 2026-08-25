@@ -60,12 +60,6 @@ final class DashboardModel: ObservableObject {
         .init(id: "sleep_hours", titleKey: "Sleep Hours", provider: .oura, unit: "h"),
         .init(id: "rp_bodyfat", titleKey: "Body Fat", provider: .renpho, unit: "%"),
         .init(id: "rp_weight", titleKey: "Weight", provider: .renpho, unit: "kg"),
-        .init(id: "rp_muscle", titleKey: "Muscle", provider: .renpho, unit: "%"),
-        .init(id: "rp_water", titleKey: "Body Water", provider: .renpho, unit: "%"),
-        .init(id: "rp_visfat", titleKey: "Visceral Fat", provider: .renpho),
-        .init(id: "rp_bmi", titleKey: "BMI", provider: .renpho),
-        .init(id: "rp_bmr", titleKey: "BMR", provider: .renpho, unit: "kcal"),
-        .init(id: "rp_bone", titleKey: "Bone Mass", provider: .renpho, unit: "kg"),
     ] + DashboardModel.manualMetrics.map {
         Metric(id: $0.key, titleKey: $0.label, provider: .manual, unit: $0.unit)
     }
@@ -89,12 +83,6 @@ final class DashboardModel: ObservableObject {
         // Renpho body composition — latest measurement, not averaged.
         "rp_bodyfat":  .init(agg: .latest, format: { String(format: "%.1f", $0) }),
         "rp_weight":   .init(agg: .latest, format: { String(format: "%.1f", $0) }),
-        "rp_muscle":   .init(agg: .latest, format: { String(format: "%.1f", $0) }),
-        "rp_water":    .init(agg: .latest, format: { String(format: "%.1f", $0) }),
-        "rp_visfat":   .init(agg: .latest, format: { String(format: "%.0f", $0) }),
-        "rp_bmi":      .init(agg: .latest, format: { String(format: "%.1f", $0) }),
-        "rp_bmr":      .init(agg: .latest, format: { String(Int($0.rounded())) }),
-        "rp_bone":     .init(agg: .latest, format: { String(format: "%.1f", $0) }),
         // Manual metrics — latest reading is the headline.
         "glucose":     .init(agg: .latest, format: { String(Int($0.rounded())) }),
         "bp_sys":      .init(agg: .latest, format: { String(Int($0.rounded())) }),
@@ -283,6 +271,11 @@ final class DashboardModel: ObservableObject {
                 if let v = (r["average_hrv"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "o_hrv", value: v) }
                 if let v = (r["total_sleep_duration"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "sleep_hours", value: v / 3600) }
                 if let v = (r["lowest_heart_rate"] as? NSNumber)?.doubleValue, v > 0 { upsert(context, day: d, key: "rhr", value: v) }
+                // Sleep-stage durations (seconds → minutes) for the stages view.
+                if let v = (r["deep_sleep_duration"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "sleep_deep", value: v / 60) }
+                if let v = (r["light_sleep_duration"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "sleep_light", value: v / 60) }
+                if let v = (r["rem_sleep_duration"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "sleep_rem", value: v / 60) }
+                if let v = (r["awake_time"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "sleep_awake", value: v / 60) }
             }
         }
         if let rows = try? await client.dailyCollection("daily_activity", start: windowStart, end: end) {

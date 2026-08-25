@@ -28,6 +28,20 @@ enum ZonePalette {
     }
 }
 
+/// Sleep-stage colors (Deep → Light → REM → Awake), a calm dark→light ramp.
+enum SleepPalette {
+    /// stages in canonical order: deep, light, rem, awake.
+    static let keys = ["sleep_deep", "sleep_light", "sleep_rem", "sleep_awake"]
+    static let labels = ["Deep", "Light", "REM", "Awake"]
+
+    static func color(index: Int, scheme: ColorScheme) -> Color {
+        let light: [Color] = [0x1B3A8C, 0x4C82E0, 0x8A6BD6, 0xC9A227].map { Color(hex: $0) }
+        let dark: [Color] = [0x4C74D6, 0x6FA0F0, 0xA88FE6, 0xD9B84A].map { Color(hex: $0) }
+        let i = min(max(index, 0), 3)
+        return (scheme == .dark ? dark : light)[i]
+    }
+}
+
 extension Color {
     init(hex: UInt32) {
         self.init(
