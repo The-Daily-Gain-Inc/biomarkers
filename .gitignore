@@ -1,0 +1,6 @@
+.DS_Store
+xcuserdata/
+DerivedData/
+*.xcodeproj
+Biomarkers/App/Secrets.swift
+build/
