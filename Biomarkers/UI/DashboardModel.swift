@@ -15,8 +15,10 @@ struct Metric: Identifiable {
     var series: [Double] = []
 }
 
-/// Loads the 16 dashboard biomarkers for the trailing 7 days. Every metric
-/// fails independently — a broken endpoint shows "—", never an empty screen.
+/// Loads the dashboard biomarkers for the trailing 7 days. Per-day values
+/// are cached in SwiftData (DailyMetric), so the grid renders instantly from
+/// the DB, old days are never re-downloaded, and history survives restarts
+/// and provider outages. The network pass only refreshes the cache.
 @MainActor
 final class DashboardModel: ObservableObject {
     @Published var metrics: [Metric] = DashboardModel.placeholders
@@ -25,10 +27,10 @@ final class DashboardModel: ObservableObject {
     static let placeholders: [Metric] = [
         .init(id: "workout_cal", titleKey: "Calories Burned", provider: .garmin, unit: "kcal"),
         .init(id: "gym", titleKey: "Gym & Fitness", provider: .garmin, unit: "workouts"),
-        .init(id: "vo2", titleKey: "VO2 Max", provider: .garmin),
+        .init(id: "vo2", titleKey: "VO2 Max", provider: .oura),
         .init(id: "fit_age", titleKey: "Fitness Age", provider: .garmin, unit: "yrs"),
         .init(id: "load", titleKey: "Training Load", provider: .garmin),
-        .init(id: "rhr", titleKey: "Resting HR", provider: .garmin, unit: "bpm"),
+        .init(id: "rhr", titleKey: "Resting HR", provider: .oura, unit: "bpm"),
         .init(id: "stress", titleKey: "Stress", provider: .garmin),
         .init(id: "steps", titleKey: "Steps Avg", provider: .garmin),
         .init(id: "o_hrv", titleKey: "HRV", provider: .oura, unit: "ms"),
@@ -40,10 +42,28 @@ final class DashboardModel: ObservableObject {
         .init(id: "sleep_hours", titleKey: "Sleep Hours", provider: .oura, unit: "h"),
     ]
 
+    /// How each cached-metric tile aggregates its 7-day series into a headline.
+    private enum Agg { case avg, latest }
+    private struct Spec { let agg: Agg; let format: (Double) -> String }
+    private static let specs: [String: Spec] = [
+        "steps":       .init(agg: .avg,    format: { String(Int($0.rounded())) }),
+        "stress":      .init(agg: .avg,    format: { String(Int($0.rounded())) }),
+        "fit_age":     .init(agg: .latest, format: { String(Int($0.rounded())) }),
+        "rhr":         .init(agg: .avg,    format: { String(Int($0.rounded())) }),
+        "vo2":         .init(agg: .latest, format: { String(format: "%.1f", $0) }),
+        "o_hrv":       .init(agg: .avg,    format: { String(Int($0.rounded())) }),
+        "o_stress":    .init(agg: .avg,    format: { String(format: "%.1f", $0) }),
+        "o_activity":  .init(agg: .avg,    format: { String(Int($0.rounded())) }),
+        "spo2":        .init(agg: .avg,    format: { String(format: "%.1f", $0) }),
+        "years":       .init(agg: .latest, format: { String(format: "%+.0f", $0) }),
+        "sleep_score": .init(agg: .avg,    format: { String(Int($0.rounded())) }),
+        "sleep_hours": .init(agg: .avg,    format: { String(format: "%.1f", $0) }),
+    ]
+
     private func set(_ id: String, value: String?, series: [Double] = []) {
         guard let idx = metrics.firstIndex(where: { $0.id == id }) else { return }
         metrics[idx].value = value
-        if !series.isEmpty { metrics[idx].series = series }
+        metrics[idx].series = series
     }
 
     func load(context: ModelContext, garmin: SessionStore, oura: OuraSession) async {
@@ -56,11 +76,39 @@ final class DashboardModel: ObservableObject {
         let windowStart = cal.date(byAdding: .day, value: -6, to: todayStart)!
         let days = (0..<7).map { cal.date(byAdding: .day, value: $0, to: windowStart)! }
 
-        loadFromActivityCache(context: context, windowStart: windowStart)
+        // 1. Instant render from cache.
+        renderFromCache(context: context, days: days)
 
-        async let g: Void = loadGarmin(garmin: garmin, days: days, windowStart: windowStart)
-        async let o: Void = loadOura(oura: oura, windowStart: windowStart, todayStart: todayStart)
+        // 2. Refresh from network into the cache, then re-render.
+        async let g: Void = loadGarmin(context: context, garmin: garmin, days: days)
+        async let o: Void = loadOura(context: context, oura: oura, windowStart: windowStart, todayStart: todayStart)
         _ = await (g, o)
+        try? context.save()
+
+        renderFromCache(context: context, days: days)
+    }
+
+    // MARK: - Cache read
+
+    private func renderFromCache(context: ModelContext, days: [Date]) {
+        loadFromActivityCache(context: context, windowStart: days.first!)
+
+        let all = (try? context.fetch(FetchDescriptor<DailyMetric>())) ?? []
+        let dayStarts = days.map { Calendar.current.startOfDay(for: $0) }
+        for (key, spec) in Self.specs {
+            let byDay = Dictionary(
+                all.filter { $0.metricKey == key }.map { ($0.day, $0.value) },
+                uniquingKeysWith: { a, _ in a }
+            )
+            let series = dayStarts.compactMap { byDay[$0] }
+            guard !series.isEmpty else { set(key, value: nil, series: []); continue }
+            let headline: Double
+            switch spec.agg {
+            case .avg: headline = series.reduce(0, +) / Double(series.count)
+            case .latest: headline = series.last ?? 0
+            }
+            set(key, value: spec.format(headline), series: series)
+        }
     }
 
     private func loadFromActivityCache(context: ModelContext, windowStart: Date) {
@@ -75,69 +123,98 @@ final class DashboardModel: ObservableObject {
         set("load", value: load > 0 ? String(Int(load)) : nil)
     }
 
-    private func loadGarmin(garmin: SessionStore, days: [Date], windowStart: Date) async {
+    // MARK: - Cache write
+
+    private func upsert(_ context: ModelContext, day: Date, key: String, value: Double) {
+        let id = DailyMetric.makeId(day: day, key: key)
+        let predicate = #Predicate<DailyMetric> { $0.id == id }
+        if let existing = try? context.fetch(FetchDescriptor(predicate: predicate)).first {
+            existing.value = value
+            existing.fetchedAt = Date()
+        } else {
+            context.insert(DailyMetric(day: day, metricKey: key, value: value))
+        }
+    }
+
+    private func isCached(_ context: ModelContext, day: Date, key: String) -> Bool {
+        let id = DailyMetric.makeId(day: day, key: key)
+        let predicate = #Predicate<DailyMetric> { $0.id == id }
+        return ((try? context.fetchCount(FetchDescriptor(predicate: predicate))) ?? 0) > 0
+    }
+
+    // MARK: - Garmin
+
+    private func loadGarmin(context: ModelContext, garmin: SessionStore, days: [Date]) async {
         guard garmin.isLoggedIn else { return }
         let client = GarminClient(session: garmin)
+        let today = Calendar.current.startOfDay(for: Date())
 
-        var steps: [Double] = [], rhr: [Double] = [], stress: [Double] = []
         for day in days {
+            // Skip network for fully-cached past days; today always refreshes.
+            let past = day < today
+            if past, isCached(context, day: day, key: "steps") { continue }
             guard let summary = try? await client.dailySummary(date: day) else { continue }
-            steps.append((summary["totalSteps"] as? NSNumber)?.doubleValue ?? 0)
-            if let v = (summary["restingHeartRate"] as? NSNumber)?.doubleValue, v > 0 { rhr.append(v) }
-            if let v = (summary["averageStressLevel"] as? NSNumber)?.doubleValue, v >= 0 { stress.append(v) }
+            if let v = (summary["totalSteps"] as? NSNumber)?.doubleValue {
+                upsert(context, day: day, key: "steps", value: v)
+            }
+            if let v = (summary["averageStressLevel"] as? NSNumber)?.doubleValue, v >= 0 {
+                upsert(context, day: day, key: "stress", value: v)
+            }
         }
-        set("steps", value: steps.isEmpty ? nil : String(Int(steps.reduce(0, +) / Double(steps.count))), series: steps)
-        set("rhr", value: rhr.isEmpty ? nil : String(Int(rhr.reduce(0, +) / Double(rhr.count))), series: rhr)
-        set("stress", value: stress.isEmpty ? nil : String(Int(stress.reduce(0, +) / Double(stress.count))), series: stress)
 
-        // HRV comes from Oura only — Garmin HRV intentionally not fetched.
-        if let rows = try? await client.vo2maxDaily(start: windowStart, end: Date()) {
-            let vals = rows.compactMap { ((($0["generic"] as? [String: Any])?["vo2MaxPreciseValue"]) as? NSNumber)?.doubleValue }
-            if let last = vals.last { set("vo2", value: String(format: "%.1f", last), series: vals) }
-        }
         if let fa = try? await client.fitnessAge(date: Date()) {
             let candidates = ["fitnessAge", "currentFitnessAge", "achievableFitnessAge"]
             if let v = candidates.compactMap({ (fa[$0] as? NSNumber)?.doubleValue }).first {
-                set("fit_age", value: String(format: "%.0f", v))
+                upsert(context, day: today, key: "fit_age", value: v)
             }
         }
     }
 
-    private func loadOura(oura: OuraSession, windowStart: Date, todayStart: Date) async {
+    // MARK: - Oura
+
+    private func day(from row: [String: Any]) -> Date? {
+        guard let s = row["day"] as? String else { return nil }
+        return GarminClient.dayFormatter.date(from: s)
+    }
+
+    private func loadOura(context: ModelContext, oura: OuraSession, windowStart: Date, todayStart: Date) async {
         guard oura.isConnected else { return }
         let client = OuraClient(session: oura)
         let end = Date()
 
         if let rows = try? await client.dailyCollection("daily_sleep", start: windowStart, end: end) {
-            let scores = rows.compactMap { ($0["score"] as? NSNumber)?.doubleValue }
-            set("sleep_score", value: scores.isEmpty ? nil : String(Int(scores.reduce(0, +) / Double(scores.count))), series: scores)
+            for r in rows where day(from: r) != nil {
+                if let s = (r["score"] as? NSNumber)?.doubleValue { upsert(context, day: day(from: r)!, key: "sleep_score", value: s) }
+            }
         }
         if let rows = try? await client.dailyCollection("sleep", start: windowStart, end: end) {
-            let nights = rows.filter { ($0["type"] as? String) == "long_sleep" }
-            let hrv = nights.compactMap { ($0["average_hrv"] as? NSNumber)?.doubleValue }
-            set("o_hrv", value: hrv.isEmpty ? nil : String(Int(hrv.reduce(0, +) / Double(hrv.count))), series: hrv)
-            let hours = nights.compactMap { ($0["total_sleep_duration"] as? NSNumber)?.doubleValue }.map { $0 / 3600 }
-            set("sleep_hours", value: hours.isEmpty ? nil : String(format: "%.1f", hours.reduce(0, +) / Double(hours.count)), series: hours)
+            for r in rows where (r["type"] as? String) == "long_sleep" {
+                guard let d = day(from: r) else { continue }
+                if let v = (r["average_hrv"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "o_hrv", value: v) }
+                if let v = (r["total_sleep_duration"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "sleep_hours", value: v / 3600) }
+                if let v = (r["lowest_heart_rate"] as? NSNumber)?.doubleValue, v > 0 { upsert(context, day: d, key: "rhr", value: v) }
+            }
         }
         if let rows = try? await client.dailyCollection("daily_activity", start: windowStart, end: end) {
-            let scores = rows.compactMap { ($0["score"] as? NSNumber)?.doubleValue }
-            set("o_activity", value: scores.isEmpty ? nil : String(Int(scores.reduce(0, +) / Double(scores.count))), series: scores)
+            for r in rows { if let d = day(from: r), let s = (r["score"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "o_activity", value: s) } }
         }
         if let rows = try? await client.dailyCollection("daily_stress", start: windowStart, end: end) {
-            let high = rows.compactMap { ($0["stress_high"] as? NSNumber)?.doubleValue }.map { $0 / 3600 }
-            set("o_stress", value: high.isEmpty ? nil : String(format: "%.1f", high.reduce(0, +) / Double(high.count)), series: high)
+            for r in rows { if let d = day(from: r), let v = (r["stress_high"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "o_stress", value: v / 3600) } }
         }
         if let rows = try? await client.dailyCollection("daily_spo2", start: windowStart, end: end) {
-            let vals = rows.compactMap { (($0["spo2_percentage"] as? [String: Any])?["average"] as? NSNumber)?.doubleValue }
-            set("spo2", value: vals.isEmpty ? nil : String(format: "%.1f", vals.reduce(0, +) / Double(vals.count)), series: vals)
+            for r in rows {
+                if let d = day(from: r), let v = ((r["spo2_percentage"] as? [String: Any])?["average"] as? NSNumber)?.doubleValue {
+                    upsert(context, day: d, key: "spo2", value: v)
+                }
+            }
+        }
+        if let rows = try? await client.dailyCollection("vO2_max", start: windowStart, end: end) {
+            for r in rows { if let d = day(from: r), let v = (r["vo2_max"] as? NSNumber)?.doubleValue, v > 0 { upsert(context, day: d, key: "vo2", value: v) } }
         }
         if let rows = try? await client.dailyCollection("daily_cardiovascular_age", start: windowStart, end: end),
            let vascular = rows.compactMap({ ($0["vascular_age"] as? NSNumber)?.doubleValue }).last {
-            if let info = try? await client.personalInfo(),
-               let age = (info["age"] as? NSNumber)?.doubleValue {
-                set("years", value: String(format: "%+.0f", age - vascular))
-            } else {
-                set("years", value: String(format: "%.0f", vascular))
+            if let info = try? await client.personalInfo(), let age = (info["age"] as? NSNumber)?.doubleValue {
+                upsert(context, day: todayStart, key: "years", value: age - vascular)
             }
         }
     }

@@ -14,6 +14,6 @@ struct BiomarkersApp: App {
                 .environmentObject(ouraSession)
                 .environmentObject(sync)
         }
-        .modelContainer(for: CachedActivity.self)
+        .modelContainer(for: [CachedActivity.self, DailyMetric.self])
     }
 }
