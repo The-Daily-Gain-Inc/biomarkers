@@ -7,6 +7,7 @@ import SwiftData
 struct TrendsView: View {
     @EnvironmentObject var session: SessionStore
     @EnvironmentObject var ouraSession: OuraSession
+    @EnvironmentObject var renphoSession: RenphoSession
     @Environment(\.modelContext) private var context
     @StateObject private var model = DashboardModel()
     @Query private var dailyMetrics: [DailyMetric]
@@ -24,6 +25,9 @@ struct TrendsView: View {
         "load": true, "rhr": false, "stress": false, "steps": true,
         "o_hrv": true, "o_stress": false, "o_activity": true, "spo2": true,
         "years": true, "sleep_score": true, "sleep_hours": true,
+        "rp_bodyfat": false, "rp_weight": false, "rp_muscle": true,
+        "rp_water": true, "rp_visfat": false, "rp_bmi": false,
+        "rp_bmr": true, "rp_bone": true,
     ]
 
     private var cal: Calendar { Calendar.current }
@@ -54,8 +58,8 @@ struct TrendsView: View {
                 .padding(.horizontal)
             }
             .navigationTitle(Text("Trends"))
-            .task { await model.loadHistory(context: context, garmin: session, oura: ouraSession, weeks: weeksOfHistory) }
-            .refreshable { await model.loadHistory(context: context, garmin: session, oura: ouraSession, weeks: weeksOfHistory) }
+            .task { await model.loadHistory(context: context, garmin: session, oura: ouraSession, renpho: renphoSession, weeks: weeksOfHistory) }
+            .refreshable { await model.loadHistory(context: context, garmin: session, oura: ouraSession, renpho: renphoSession, weeks: weeksOfHistory) }
             .overlay(alignment: .top) {
                 if model.isLoadingHistory {
                     ProgressView().padding(.top, 6)

@@ -5,6 +5,7 @@ import SwiftData
 struct BiomarkersApp: App {
     @StateObject private var session = SessionStore()
     @StateObject private var ouraSession = OuraSession()
+    @StateObject private var renphoSession = RenphoSession()
     @StateObject private var sync = SyncEngine()
     @StateObject private var zones = ZoneStore()
 
@@ -13,6 +14,7 @@ struct BiomarkersApp: App {
             RootView()
                 .environmentObject(session)
                 .environmentObject(ouraSession)
+                .environmentObject(renphoSession)
                 .environmentObject(sync)
                 .environmentObject(zones)
         }

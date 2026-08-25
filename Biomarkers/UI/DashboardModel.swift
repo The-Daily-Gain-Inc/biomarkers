@@ -5,6 +5,7 @@ struct Metric: Identifiable {
     enum Provider: String {
         case garmin = "Garmin"
         case oura = "Oura"
+        case renpho = "Renpho"
     }
 
     let id: String
@@ -44,6 +45,14 @@ final class DashboardModel: ObservableObject {
         .init(id: "years", titleKey: "Years Younger", provider: .oura, unit: "yrs"),
         .init(id: "sleep_score", titleKey: "Sleep Score", provider: .oura),
         .init(id: "sleep_hours", titleKey: "Sleep Hours", provider: .oura, unit: "h"),
+        .init(id: "rp_bodyfat", titleKey: "Body Fat", provider: .renpho, unit: "%"),
+        .init(id: "rp_weight", titleKey: "Weight", provider: .renpho, unit: "kg"),
+        .init(id: "rp_muscle", titleKey: "Muscle", provider: .renpho, unit: "%"),
+        .init(id: "rp_water", titleKey: "Body Water", provider: .renpho, unit: "%"),
+        .init(id: "rp_visfat", titleKey: "Visceral Fat", provider: .renpho),
+        .init(id: "rp_bmi", titleKey: "BMI", provider: .renpho),
+        .init(id: "rp_bmr", titleKey: "BMR", provider: .renpho, unit: "kcal"),
+        .init(id: "rp_bone", titleKey: "Bone Mass", provider: .renpho, unit: "kg"),
     ]
 
     /// How each cached-metric tile aggregates its 7-day series into a headline.
@@ -62,6 +71,15 @@ final class DashboardModel: ObservableObject {
         "years":       .init(agg: .latest, format: { String(format: "%+.0f", $0) }),
         "sleep_score": .init(agg: .avg,    format: { String(Int($0.rounded())) }),
         "sleep_hours": .init(agg: .avg,    format: { String(format: "%.1f", $0) }),
+        // Renpho body composition — latest measurement, not averaged.
+        "rp_bodyfat":  .init(agg: .latest, format: { String(format: "%.1f", $0) }),
+        "rp_weight":   .init(agg: .latest, format: { String(format: "%.1f", $0) }),
+        "rp_muscle":   .init(agg: .latest, format: { String(format: "%.1f", $0) }),
+        "rp_water":    .init(agg: .latest, format: { String(format: "%.1f", $0) }),
+        "rp_visfat":   .init(agg: .latest, format: { String(format: "%.0f", $0) }),
+        "rp_bmi":      .init(agg: .latest, format: { String(format: "%.1f", $0) }),
+        "rp_bmr":      .init(agg: .latest, format: { String(Int($0.rounded())) }),
+        "rp_bone":     .init(agg: .latest, format: { String(format: "%.1f", $0) }),
     ]
 
     private func set(_ id: String, value: String?, series: [Double] = []) {
@@ -70,7 +88,7 @@ final class DashboardModel: ObservableObject {
         metrics[idx].series = series
     }
 
-    func load(context: ModelContext, garmin: SessionStore, oura: OuraSession) async {
+    func load(context: ModelContext, garmin: SessionStore, oura: OuraSession, renpho: RenphoSession) async {
         guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
@@ -86,7 +104,8 @@ final class DashboardModel: ObservableObject {
         // 2. Refresh from network into the cache, then re-render.
         async let g: Void = loadGarmin(context: context, garmin: garmin, days: days)
         async let o: Void = loadOura(context: context, oura: oura, windowStart: windowStart, todayStart: todayStart)
-        _ = await (g, o)
+        async let r: Void = loadRenpho(context: context, renpho: renpho)
+        _ = await (g, o, r)
         try? context.save()
 
         renderFromCache(context: context, days: days)
@@ -95,7 +114,7 @@ final class DashboardModel: ObservableObject {
     /// Fetches and caches daily metrics over a wider window (for the Trends
     /// matrix). Reuses the same per-day cache, so it only downloads days not
     /// already stored.
-    func loadHistory(context: ModelContext, garmin: SessionStore, oura: OuraSession, weeks: Int) async {
+    func loadHistory(context: ModelContext, garmin: SessionStore, oura: OuraSession, renpho: RenphoSession, weeks: Int) async {
         guard !isLoadingHistory else { return }
         isLoadingHistory = true
         defer { isLoadingHistory = false }
@@ -108,7 +127,8 @@ final class DashboardModel: ObservableObject {
 
         async let g: Void = loadGarmin(context: context, garmin: garmin, days: days)
         async let o: Void = loadOura(context: context, oura: oura, windowStart: windowStart, todayStart: today)
-        _ = await (g, o)
+        async let r: Void = loadRenpho(context: context, renpho: renpho)
+        _ = await (g, o, r)
         try? context.save()
     }
 
@@ -120,8 +140,17 @@ final class DashboardModel: ObservableObject {
         let all = (try? context.fetch(FetchDescriptor<DailyMetric>())) ?? []
         let dayStarts = days.map { Calendar.current.startOfDay(for: $0) }
         for (key, spec) in Self.specs {
+            let rows = all.filter { $0.metricKey == key }
+            // Body composition is measured irregularly — show the latest
+            // reading and its recent trend, not just the trailing 7 days.
+            if key.hasPrefix("rp_") {
+                let sorted = rows.sorted { $0.day < $1.day }
+                guard let latest = sorted.last else { set(key, value: nil, series: []); continue }
+                set(key, value: spec.format(latest.value), series: sorted.suffix(7).map(\.value))
+                continue
+            }
             let byDay = Dictionary(
-                all.filter { $0.metricKey == key }.map { ($0.day, $0.value) },
+                rows.map { ($0.day, $0.value) },
                 uniquingKeysWith: { a, _ in a }
             )
             let series = dayStarts.compactMap { byDay[$0] }
@@ -190,6 +219,20 @@ final class DashboardModel: ObservableObject {
             let candidates = ["fitnessAge", "currentFitnessAge", "achievableFitnessAge"]
             if let v = candidates.compactMap({ (fa[$0] as? NSNumber)?.doubleValue }).first {
                 upsert(context, day: today, key: "fit_age", value: v)
+            }
+        }
+    }
+
+    // MARK: - Renpho
+
+    private func loadRenpho(context: ModelContext, renpho: RenphoSession) async {
+        guard renpho.isConnected else { return }
+        let client = RenphoClient(session: renpho)
+        guard let measurements = try? await client.measurements() else { return }
+        // Sorted ascending, so the latest measurement of any day is stored last.
+        for m in measurements {
+            for (key, value) in m.values {
+                upsert(context, day: m.date, key: key, value: value)
             }
         }
     }

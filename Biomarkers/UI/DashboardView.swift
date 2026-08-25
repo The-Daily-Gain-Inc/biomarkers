@@ -5,6 +5,7 @@ import Charts
 struct DashboardView: View {
     @EnvironmentObject var session: SessionStore
     @EnvironmentObject var ouraSession: OuraSession
+    @EnvironmentObject var renphoSession: RenphoSession
     @EnvironmentObject var sync: SyncEngine
     @Environment(\.modelContext) private var context
     @StateObject private var model = DashboardModel()
@@ -76,7 +77,7 @@ struct DashboardView: View {
         if session.isLoggedIn {
             await sync.sync(context: context, session: session, backfillMonths: backfillMonths)
         }
-        await model.load(context: context, garmin: session, oura: ouraSession)
+        await model.load(context: context, garmin: session, oura: ouraSession, renpho: renphoSession)
     }
 }
 

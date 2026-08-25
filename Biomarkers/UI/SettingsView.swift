@@ -4,12 +4,16 @@ import SwiftData
 struct SettingsView: View {
     @EnvironmentObject var session: SessionStore
     @EnvironmentObject var ouraSession: OuraSession
+    @EnvironmentObject var renphoSession: RenphoSession
     @EnvironmentObject var sync: SyncEngine
     @Environment(\.modelContext) private var context
     @AppStorage("backfillMonths") private var backfillMonths = 6
     @State private var showGarminLogin = false
     @State private var showOuraLogin = false
     @State private var ouraTokenInput = ""
+    @State private var renphoEmail = ""
+    @State private var renphoPassword = ""
+    @State private var renphoBusy = false
     @State private var cachedCount = 0
     @EnvironmentObject private var zones: ZoneStore
     @Environment(\.colorScheme) private var colorScheme
@@ -86,6 +90,45 @@ struct SettingsView: View {
                     Text("Oura")
                 } footer: {
                     Text("Signs in via Oura OAuth (redirect to thedailygain.ca is intercepted in-app). Personal tokens can be created at cloud.ouraring.com.")
+                }
+
+                Section {
+                    if renphoSession.isConnected {
+                        Label("Connected", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        if let email = renphoSession.creds?.email {
+                            Text(email).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Button("Disconnect", role: .destructive) { renphoSession.disconnect() }
+                    } else {
+                        TextField(String(localized: "Renpho email"), text: $renphoEmail)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .keyboardType(.emailAddress)
+                        SecureField(String(localized: "Renpho password"), text: $renphoPassword)
+                        Button {
+                            renphoBusy = true
+                            Task {
+                                await renphoSession.login(email: renphoEmail, password: renphoPassword)
+                                renphoBusy = false
+                                if renphoSession.isConnected { renphoPassword = "" }
+                            }
+                        } label: {
+                            if renphoBusy {
+                                HStack { ProgressView(); Text("Signing in…") }
+                            } else {
+                                Text("Connect Renpho")
+                            }
+                        }
+                        .disabled(renphoBusy || renphoEmail.isEmpty || renphoPassword.isEmpty)
+                    }
+                    if let error = renphoSession.lastError {
+                        Text(error).font(.caption).foregroundStyle(.red)
+                    }
+                } header: {
+                    Text("Renpho")
+                } footer: {
+                    Text("Uses your Renpho account to pull body composition (body fat, muscle, water, visceral fat, BMI, BMR, bone mass). Credentials are stored only in the device Keychain.")
                 }
 
                 Section {
