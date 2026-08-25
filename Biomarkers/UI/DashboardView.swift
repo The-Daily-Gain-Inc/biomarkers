@@ -149,6 +149,7 @@ struct TodayCard: View {
                 stat("Sleep", score("sleep_score"), nil)
                 stat("Stress", score("stress"), nil)
                 stat("Activity", score("o_activity"), nil)
+                stat("Steps", score("steps"), nil)
                 stat("HRV", score("o_hrv"), "ms")
                 stat("Resting HR", score("rhr"), "bpm")
             }

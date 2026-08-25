@@ -234,7 +234,7 @@ final class DashboardModel: ObservableObject {
                 upsert(context, day: today, key: "fit_age", value: v)
             }
         }
-        Self.markUpdated("garmin")
+        if let sync = try? await client.lastDeviceSync() { Self.setSynced("garmin", sync) }
     }
 
     // MARK: - Renpho
@@ -249,12 +249,14 @@ final class DashboardModel: ObservableObject {
                 upsert(context, day: m.date, key: key, value: value)
             }
         }
-        Self.markUpdated("renpho")
+        // Last weigh-in is the scale's real "sync" moment.
+        if let last = measurements.last?.date { Self.setSynced("renpho", last) }
     }
 
-    /// Records the last successful sync time per provider (shown on Today).
-    static func markUpdated(_ provider: String) {
-        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "lastUpdate.\(provider)")
+    /// Records when the provider's *device* last synced its data (not when we
+    /// pulled) — shown on Today so the time reflects real data freshness.
+    static func setSynced(_ provider: String, _ date: Date) {
+        UserDefaults.standard.set(date.timeIntervalSince1970, forKey: "lastUpdate.\(provider)")
     }
 
     // MARK: - Oura
@@ -312,6 +314,10 @@ final class DashboardModel: ObservableObject {
                 upsert(context, day: todayStart, key: "years", value: age - vascular)
             }
         }
-        Self.markUpdated("oura")
+        // Latest heart-rate sample time ≈ when the ring last synced.
+        if let samples = try? await client.heartRate(start: Calendar.current.date(byAdding: .day, value: -2, to: end)!, end: end),
+           let latest = samples.compactMap({ $0.date }).max() {
+            Self.setSynced("oura", latest)
+        }
     }
 }

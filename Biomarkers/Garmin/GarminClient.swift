@@ -111,6 +111,15 @@ final class GarminClient {
         return try await json(path: "/metrics-service/metrics/maxmet/daily/\(s)/\(e)") as? [[String: Any]] ?? []
     }
 
+    /// When a Garmin device last uploaded to Connect (true last-sync time).
+    func lastDeviceSync() async throws -> Date? {
+        let obj = try await json(path: "/device-service/deviceservice/mylastused") as? [String: Any]
+        if let ms = (obj?["lastUsedDeviceUploadTime"] as? NSNumber)?.doubleValue, ms > 0 {
+            return Date(timeIntervalSince1970: ms / 1000)
+        }
+        return nil
+    }
+
     func fitnessAge(date: Date) async throws -> [String: Any] {
         let day = Self.dayFormatter.string(from: date)
         return try await json(path: "/fitnessage-service/fitnessage/\(day)") as? [String: Any] ?? [:]
