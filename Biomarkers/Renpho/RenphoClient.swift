@@ -6,6 +6,8 @@ struct RenphoMeasurement {
     let values: [String: Double]   // keyed by our metric keys (rp_bodyfat, …)
 }
 
+enum RenphoRequestError: Error { case auth }
+
 @MainActor
 final class RenphoClient {
     private let session: RenphoSession
@@ -26,8 +28,18 @@ final class RenphoClient {
         self.session = session
     }
 
-    /// Full measurement history, oldest first.
+    /// Full measurement history, oldest first. Silently re-logs in once if the
+    /// stored token has lapsed, so the user never has to re-enter credentials.
     func measurements() async throws -> [RenphoMeasurement] {
+        do {
+            return try await fetchAll()
+        } catch RenphoRequestError.auth {
+            guard await session.relogin() else { throw URLError(.userAuthenticationRequired) }
+            return try await fetchAll()
+        }
+    }
+
+    private func fetchAll() async throws -> [RenphoMeasurement] {
         guard let creds = session.creds else { throw URLError(.userAuthenticationRequired) }
         // Measurements are sharded by userId % 24.
         let table = "measurements_info_\(creds.userId % 24)"
@@ -84,14 +96,23 @@ final class RenphoClient {
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: req)
-        guard (response as? HTTPURLResponse)?.statusCode == 200,
+        let http = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard http == 200,
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            // 401/403 or unparseable → treat as an auth lapse worth a relogin.
+            if http == 401 || http == 403 { throw RenphoRequestError.auth }
             return nil
         }
-        guard RenphoSession.isSuccess(code: obj["code"], msg: (obj["msg"] as? String) ?? ""),
-              let encData = obj["data"] as? String else { return nil }
+        let code = obj["code"]
+        let msg = (obj["msg"] as? String) ?? ""
+        guard RenphoSession.isSuccess(code: code, msg: msg) else {
+            // A non-success code with data present usually means a stale token.
+            DebugLog.shared.add("renpho fetch code=\(code ?? "nil") msg=\(msg)")
+            throw RenphoRequestError.auth
+        }
+        guard let encData = obj["data"] as? String else { return [] }
         let decoded = RenphoCrypto.decryptResponse(encData)
-        return Self.extractRecords(decoded)
+        return Self.extractRecords(decoded) ?? []
     }
 
     private static func extractRecords(_ page: Any?) -> [[String: Any]]? {

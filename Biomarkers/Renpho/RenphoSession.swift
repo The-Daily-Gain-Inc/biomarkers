@@ -15,10 +15,11 @@ final class RenphoSession: ObservableObject {
     static let scaleTypes = ["01","02","03","04","05","06","07","08","09","0A",
                              "0B","0C","0D","0E","0F","10","11","12","13","14"]
 
-    private static let keychainKey = "renpho.session.v2"
+    private static let keychainKey = "renpho.session.v3"
 
     struct Creds: Codable, Equatable {
         var email: String
+        var password: String   // kept in Keychain so we can silently re-login
         var token: String
         var userId: Int
     }
@@ -78,7 +79,7 @@ final class RenphoSession: ObservableObject {
             }
             let uid = (loginInfo["id"] as? NSNumber)?.intValue
                 ?? Int((loginInfo["id"] as? String) ?? "") ?? 0
-            let c = Creds(email: email, token: token, userId: uid)
+            let c = Creds(email: email, password: password, token: token, userId: uid)
             creds = c
             isConnected = true
             if let enc = try? JSONEncoder().encode(c) { Keychain.save(enc, key: Self.keychainKey) }
@@ -86,6 +87,14 @@ final class RenphoSession: ObservableObject {
         } catch {
             lastError = error.localizedDescription
         }
+    }
+
+    /// Re-authenticates using the stored credentials (after a token lapses),
+    /// keeping the user signed in without re-entry. Returns true on success.
+    func relogin() async -> Bool {
+        guard let c = creds else { return false }
+        await login(email: c.email, password: c.password)
+        return isConnected
     }
 
     static func isSuccess(code: Any?, msg: String) -> Bool {
