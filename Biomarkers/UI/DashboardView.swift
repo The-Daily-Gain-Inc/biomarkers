@@ -12,6 +12,8 @@ struct DashboardView: View {
     @AppStorage("backfillMonths") private var backfillMonths = 6
     @State private var showGarminLogin = false
     @State private var showLog = false
+    @State private var mode: Mode = .today
+    enum Mode: String, CaseIterable { case today = "Today", week = "Last 7 Days" }
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
@@ -43,18 +45,30 @@ struct DashboardView: View {
                 TodayCard()
                     .padding(.horizontal)
                     .padding(.bottom, 4)
-                ProfileCard()
-                    .padding(.horizontal)
-                    .padding(.bottom, 4)
-                LazyVGrid(columns: columns, spacing: 12) {
-                    ForEach(model.metrics.filter { $0.value != nil }) { metric in
-                        MetricTile(metric: metric)
-                    }
+                Picker("Mode", selection: $mode) {
+                    ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
+                .pickerStyle(.segmented)
                 .padding(.horizontal)
+                .padding(.bottom, 4)
+
+                if mode == .today {
+                    TodayCard()
+                        .padding(.horizontal)
+                        .padding(.bottom, 4)
+                    ProfileCard()
+                        .padding(.horizontal)
+                } else {
+                    LazyVGrid(columns: columns, spacing: 12) {
+                        ForEach(model.metrics.filter { $0.value != nil }) { metric in
+                            MetricTile(metric: metric)
+                        }
+                    }
+                    .padding(.horizontal)
+                }
             }
             .background(Color(.systemGroupedBackground))
-            .navigationTitle(Text("Last 7 Days"))
+            .navigationTitle(Text("Biomarkers"))
             .sheet(isPresented: $showGarminLogin) { GarminLoginSheet() }
             .refreshable { await reload() }
             .task { await reload() }
@@ -115,39 +129,66 @@ struct ConnectBanner: View {
     }
 }
 
-/// "Today" — the three headline recovery metrics (latest cached values):
-/// HRV, resting HR, and last night's sleep.
+/// The default "Today" view: headline scores for the day plus how recently
+/// each provider synced.
 struct TodayCard: View {
-    @Query(filter: #Predicate<DailyMetric> { $0.metricKey == "o_hrv" },
-           sort: \DailyMetric.day, order: .reverse) private var hrv: [DailyMetric]
-    @Query(filter: #Predicate<DailyMetric> { $0.metricKey == "rhr" },
-           sort: \DailyMetric.day, order: .reverse) private var rhr: [DailyMetric]
-    @Query(filter: #Predicate<DailyMetric> { $0.metricKey == "sleep_hours" },
-           sort: \DailyMetric.day, order: .reverse) private var sleep: [DailyMetric]
+    @Query(sort: \DailyMetric.day, order: .reverse) private var all: [DailyMetric]
+    @AppStorage("lastUpdate.oura") private var ouraTS: Double = 0
+    @AppStorage("lastUpdate.garmin") private var garminTS: Double = 0
+    @AppStorage("lastUpdate.renpho") private var renphoTS: Double = 0
+
+    private func latest(_ key: String) -> Double? { all.first { $0.metricKey == key }?.value }
+    private func score(_ key: String) -> String? { latest(key).map { "\(Int($0.rounded()))" } }
+
+    private let cols = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Today").font(.headline)
-            HStack(spacing: 12) {
-                stat("HRV", hrv.first.map { "\(Int($0.value))" }, "ms")
-                stat("Resting HR", rhr.first.map { "\(Int($0.value))" }, "bpm")
-                stat("Sleep", sleep.first.map { String(format: "%.1f", $0.value) }, "h")
+        VStack(alignment: .leading, spacing: 12) {
+            LazyVGrid(columns: cols, spacing: 14) {
+                stat("Readiness", score("readiness"), nil)
+                stat("Sleep", score("sleep_score"), nil)
+                stat("Stress", score("stress"), nil)
+                stat("Activity", score("o_activity"), nil)
+                stat("HRV", score("o_hrv"), "ms")
+                stat("Resting HR", score("rhr"), "bpm")
             }
+            Divider()
+            HStack(spacing: 14) {
+                updated("Oura", ouraTS)
+                updated("Garmin", garminTS)
+                updated("Renpho", renphoTS)
+            }
+            .font(.caption2)
         }
-        .padding(14)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
-    private func stat(_ title: String, _ value: String?, _ unit: String) -> some View {
-        VStack(spacing: 2) {
+    private func stat(_ title: String, _ value: String?, _ unit: String?) -> some View {
+        VStack(spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(value ?? "—").font(.system(.title2, design: .rounded, weight: .semibold))
-                if value != nil { Text(unit).font(.caption2).foregroundStyle(.secondary) }
+                if let unit, value != nil { Text(unit).font(.caption2).foregroundStyle(.secondary) }
             }
             Text(LocalizedStringKey(title)).font(.caption2).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private func updated(_ name: String, _ ts: Double) -> some View {
+        VStack(spacing: 1) {
+            Text(name).foregroundStyle(.secondary)
+            Text(ts > 0 ? relative(ts) : "—")
+                .foregroundStyle(ts > 0 ? .primary : .tertiary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func relative(_ ts: Double) -> String {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f.localizedString(for: Date(timeIntervalSince1970: ts), relativeTo: Date())
     }
 }
 

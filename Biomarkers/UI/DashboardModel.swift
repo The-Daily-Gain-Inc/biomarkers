@@ -51,6 +51,7 @@ final class DashboardModel: ObservableObject {
         .init(id: "rhr", titleKey: "Resting HR", provider: .oura, unit: "bpm"),
         .init(id: "stress", titleKey: "Stress", provider: .garmin),
         .init(id: "steps", titleKey: "Steps Avg", provider: .garmin),
+        .init(id: "readiness", titleKey: "Readiness", provider: .oura),
         .init(id: "o_hrv", titleKey: "HRV", provider: .oura, unit: "ms"),
         .init(id: "o_stress", titleKey: "Oura Stress", provider: .oura, unit: "h high"),
         .init(id: "o_activity", titleKey: "Oura Activity", provider: .oura),
@@ -73,6 +74,7 @@ final class DashboardModel: ObservableObject {
         "fit_age":     .init(agg: .latest, format: { String(Int($0.rounded())) }),
         "rhr":         .init(agg: .avg,    format: { String(Int($0.rounded())) }),
         "vo2":         .init(agg: .latest, format: { String(format: "%.1f", $0) }),
+        "readiness":   .init(agg: .avg,    format: { String(Int($0.rounded())) }),
         "o_hrv":       .init(agg: .avg,    format: { String(Int($0.rounded())) }),
         "o_stress":    .init(agg: .avg,    format: { String(format: "%.1f", $0) }),
         "o_activity":  .init(agg: .avg,    format: { String(Int($0.rounded())) }),
@@ -232,6 +234,7 @@ final class DashboardModel: ObservableObject {
                 upsert(context, day: today, key: "fit_age", value: v)
             }
         }
+        Self.markUpdated("garmin")
     }
 
     // MARK: - Renpho
@@ -246,6 +249,12 @@ final class DashboardModel: ObservableObject {
                 upsert(context, day: m.date, key: key, value: value)
             }
         }
+        Self.markUpdated("renpho")
+    }
+
+    /// Records the last successful sync time per provider (shown on Today).
+    static func markUpdated(_ provider: String) {
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "lastUpdate.\(provider)")
     }
 
     // MARK: - Oura
@@ -264,6 +273,9 @@ final class DashboardModel: ObservableObject {
             for r in rows where day(from: r) != nil {
                 if let s = (r["score"] as? NSNumber)?.doubleValue { upsert(context, day: day(from: r)!, key: "sleep_score", value: s) }
             }
+        }
+        if let rows = try? await client.dailyCollection("daily_readiness", start: windowStart, end: end) {
+            for r in rows { if let d = day(from: r), let s = (r["score"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "readiness", value: s) } }
         }
         if let rows = try? await client.dailyCollection("sleep", start: windowStart, end: end) {
             for r in rows where (r["type"] as? String) == "long_sleep" {
@@ -300,5 +312,6 @@ final class DashboardModel: ObservableObject {
                 upsert(context, day: todayStart, key: "years", value: age - vascular)
             }
         }
+        Self.markUpdated("oura")
     }
 }

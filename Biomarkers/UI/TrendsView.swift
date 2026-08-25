@@ -23,7 +23,7 @@ struct TrendsView: View {
     private static let higherIsBetter: [String: Bool] = [
         "workout_cal": true, "gym": true, "vo2": true, "fit_age": false,
         "load": true, "rhr": false, "stress": false, "steps": true,
-        "o_hrv": true, "o_stress": false, "o_activity": true, "spo2": true,
+        "readiness": true, "o_hrv": true, "o_stress": false, "o_activity": true, "spo2": true,
         "years": true, "sleep_score": true, "sleep_hours": true,
         "rp_bodyfat": false, "rp_weight": false,
         "glucose": false, "bp_sys": false, "bp_dia": false, "ear": true,

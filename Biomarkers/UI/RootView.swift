@@ -3,6 +3,15 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject var session: SessionStore
     @State private var showGarminLogin = false
+    @AppStorage("appearance") private var appearance = "system"
+
+    private var colorScheme: ColorScheme? {
+        switch appearance {
+        case "light": return .light
+        case "dark": return .dark
+        default: return nil
+        }
+    }
     // -InitialTab 0|1|2 lets simulator UI checks land on a specific tab.
     @State private var selectedTab = UserDefaults.standard.integer(forKey: "InitialTab")
 
@@ -24,6 +33,7 @@ struct RootView: View {
                 .tabItem { Label("Settings", systemImage: "gearshape") }
                 .tag(4)
         }
+        .preferredColorScheme(colorScheme)
         .sheet(isPresented: $showGarminLogin) {
             GarminLoginSheet()
         }

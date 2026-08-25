@@ -8,6 +8,7 @@ struct SettingsView: View {
     @EnvironmentObject var sync: SyncEngine
     @Environment(\.modelContext) private var context
     @AppStorage("backfillMonths") private var backfillMonths = 6
+    @AppStorage("appearance") private var appearance = "system"
     @State private var showGarminLogin = false
     @State private var showOuraLogin = false
     @State private var ouraTokenInput = ""
@@ -22,6 +23,13 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("Appearance") {
+                    Picker("Theme", selection: $appearance) {
+                        Text("System").tag("system")
+                        Text("Light").tag("light")
+                        Text("Dark").tag("dark")
+                    }
+                }
                 Section {
                     if session.isLoggedIn {
                         Label("Connected", systemImage: "checkmark.circle.fill")
