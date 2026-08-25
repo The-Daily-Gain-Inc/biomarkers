@@ -49,11 +49,10 @@ final class DashboardModel: ObservableObject {
         .init(id: "fit_age", titleKey: "Fitness Age", provider: .garmin, unit: "yrs"),
         .init(id: "load", titleKey: "Training Load", provider: .garmin),
         .init(id: "rhr", titleKey: "Resting HR", provider: .oura, unit: "bpm"),
-        .init(id: "stress", titleKey: "Stress", provider: .garmin),
         .init(id: "steps", titleKey: "Steps Avg", provider: .garmin),
         .init(id: "readiness", titleKey: "Readiness", provider: .oura),
         .init(id: "o_hrv", titleKey: "HRV", provider: .oura, unit: "ms"),
-        .init(id: "o_stress", titleKey: "Oura Stress", provider: .oura, unit: "h high"),
+        .init(id: "o_stress", titleKey: "Stress", provider: .oura, unit: "h high"),
         .init(id: "o_activity", titleKey: "Oura Activity", provider: .oura),
         .init(id: "spo2", titleKey: "Blood Oxygen %", provider: .oura, unit: "%"),
         .init(id: "years", titleKey: "Years Younger", provider: .oura, unit: "yrs"),
@@ -70,7 +69,6 @@ final class DashboardModel: ObservableObject {
     struct Spec { let agg: Agg; let format: (Double) -> String }
     static let specs: [String: Spec] = [
         "steps":       .init(agg: .avg,    format: { String(Int($0.rounded())) }),
-        "stress":      .init(agg: .avg,    format: { String(Int($0.rounded())) }),
         "fit_age":     .init(agg: .latest, format: { String(Int($0.rounded())) }),
         "rhr":         .init(agg: .avg,    format: { String(Int($0.rounded())) }),
         "vo2":         .init(agg: .latest, format: { String(format: "%.1f", $0) }),
@@ -223,9 +221,7 @@ final class DashboardModel: ObservableObject {
             if let v = (summary["totalSteps"] as? NSNumber)?.doubleValue {
                 upsert(context, day: day, key: "steps", value: v)
             }
-            if let v = (summary["averageStressLevel"] as? NSNumber)?.doubleValue, v >= 0 {
-                upsert(context, day: day, key: "stress", value: v)
-            }
+            // Stress comes from Oura only (Garmin's 0–100 level is not used).
         }
 
         if let fa = try? await client.fitnessAge(date: Date()) {

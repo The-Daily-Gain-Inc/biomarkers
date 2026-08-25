@@ -64,6 +64,7 @@ struct DashboardView: View {
                     .padding(.horizontal)
                 }
             }
+            .swipeSegments($mode)
             .background(Color(.systemGroupedBackground))
             .navigationTitle(Text("Biomarkers"))
             .sheet(isPresented: $showGarminLogin) { GarminLoginSheet() }
@@ -144,7 +145,7 @@ struct TodayCard: View {
             LazyVGrid(columns: cols, spacing: 14) {
                 stat("Readiness", score("readiness"), nil)
                 stat("Sleep", score("sleep_score"), nil)
-                stat("Stress", score("stress"), nil)
+                stat("Stress", latest("o_stress").map { String(format: "%.1f", $0) }, "h")
                 stat("Activity", score("o_activity"), nil)
                 stat("Steps", score("steps"), nil)
                 stat("HRV", score("o_hrv"), "ms")

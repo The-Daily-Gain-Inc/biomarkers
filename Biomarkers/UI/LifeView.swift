@@ -27,6 +27,7 @@ struct LifeView: View {
                 case .retro: RetroMatrix()
                 }
             }
+            .swipeSegments($tab)
             .navigationTitle(Text("Life"))
             .task { seedIfNeeded() }
         }

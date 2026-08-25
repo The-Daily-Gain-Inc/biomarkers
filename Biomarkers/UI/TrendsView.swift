@@ -22,7 +22,7 @@ struct TrendsView: View {
     /// Used to color the week-over-week arrow green (better) or red (worse).
     private static let higherIsBetter: [String: Bool] = [
         "workout_cal": true, "gym": true, "vo2": true, "fit_age": false,
-        "load": true, "rhr": false, "stress": false, "steps": true,
+        "load": true, "rhr": false, "steps": true,
         "readiness": true, "o_hrv": true, "o_stress": false, "o_activity": true, "spo2": true,
         "years": true, "sleep_score": true, "sleep_hours": true,
         "rp_bodyfat": false, "rp_weight": false,
@@ -52,20 +52,50 @@ struct TrendsView: View {
                             ForEach(Array(weeks.enumerated()), id: \.offset) { idx, week in
                                 weekColumn(index: idx, week: week)
                             }
+                            loadMoreColumn
                         }
                     }
                 }
                 .padding(.horizontal)
             }
             .navigationTitle(Text("Trends"))
-            .task { await model.loadHistory(context: context, garmin: session, oura: ouraSession, renpho: renphoSession, weeks: weeksOfHistory) }
-            .refreshable { await model.loadHistory(context: context, garmin: session, oura: ouraSession, renpho: renphoSession, weeks: weeksOfHistory) }
+            .task { await loadHistory() }
+            .onChange(of: weeksOfHistory) { _, _ in Task { await loadHistory() } }
+            .refreshable { await loadHistory() }
             .overlay(alignment: .top) {
                 if model.isLoadingHistory {
                     ProgressView().padding(.top, 6)
                 }
             }
         }
+    }
+
+    private func loadHistory() async {
+        await model.loadHistory(context: context, garmin: session, oura: ouraSession,
+                                renpho: renphoSession, weeks: weeksOfHistory)
+    }
+
+    /// Trailing column that loads another block of older weeks on demand
+    /// (older weeks are on the right, so the button lives at the end).
+    private var loadMoreColumn: some View {
+        VStack {
+            if model.isLoadingHistory {
+                ProgressView()
+            } else {
+                Button {
+                    weeksOfHistory += 6
+                } label: {
+                    VStack(spacing: 4) {
+                        Image(systemName: "arrow.right.circle")
+                        Text("Load\n6 more").multilineTextAlignment(.center)
+                    }
+                    .font(.caption)
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .frame(width: colWidth, height: rowHeight * 3)
+        .padding(.top, rowHeight)
     }
 
     private var frozenColumn: some View {
