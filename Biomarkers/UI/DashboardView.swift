@@ -9,6 +9,7 @@ struct DashboardView: View {
     @Environment(\.modelContext) private var context
     @StateObject private var model = DashboardModel()
     @AppStorage("backfillMonths") private var backfillMonths = 6
+    @State private var showGarminLogin = false
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
@@ -16,7 +17,9 @@ struct DashboardView: View {
         NavigationStack {
             ScrollView {
                 if !session.isLoggedIn {
-                    ConnectBanner(text: "Garmin not connected") { session.needsLogin = true }
+                    ConnectBanner(text: "Garmin not connected") { showGarminLogin = true }
+                } else if session.needsLogin {
+                    ConnectBanner(text: "Garmin session expired") { showGarminLogin = true }
                 }
                 if !ouraSession.isConnected {
                     ConnectBanner(text: "Oura not connected — connect in Settings", action: nil)
@@ -44,6 +47,7 @@ struct DashboardView: View {
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle(Text("Last 7 Days"))
+            .sheet(isPresented: $showGarminLogin) { GarminLoginSheet() }
             .refreshable { await reload() }
             .task { await reload() }
             .onChange(of: session.token) { _, token in

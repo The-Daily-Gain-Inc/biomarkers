@@ -21,9 +21,6 @@ struct RootView: View {
         .sheet(isPresented: $showGarminLogin) {
             GarminLoginSheet()
         }
-        .onChange(of: session.needsLogin) { _, needs in
-            if needs { showGarminLogin = true }
-        }
         .onAppear {
             // -SkipAutoLogin YES lets simulator UI checks bypass the sheet.
             if !session.isLoggedIn && !UserDefaults.standard.bool(forKey: "SkipAutoLogin") {

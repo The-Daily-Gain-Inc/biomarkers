@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var showOuraLogin = false
     @State private var ouraTokenInput = ""
     @State private var cachedCount = 0
+    @ObservedObject private var log = DebugLog.shared
 
     var body: some View {
         NavigationStack {
@@ -76,6 +77,24 @@ struct SettingsView: View {
                     Text("Oura")
                 } footer: {
                     Text("Signs in via Oura OAuth (redirect to thedailygain.ca is intercepted in-app). Personal tokens can be created at cloud.ouraring.com.")
+                }
+
+                Section {
+                    if log.lines.isEmpty {
+                        Text("No entries yet")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(Array(log.lines.suffix(25).enumerated()), id: \.offset) { _, line in
+                            Text(line)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                        Button("Copy All") {
+                            UIPasteboard.general.string = log.joined
+                        }
+                    }
+                } header: {
+                    Text("Diagnostics")
                 }
 
                 Section {

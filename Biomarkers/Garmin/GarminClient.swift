@@ -101,28 +101,33 @@ final class GarminClient {
         return try await json(path: "/fitnessage-service/fitnessage/\(day)") as? [String: Any] ?? [:]
     }
 
-    private func get(path: String, isRetry: Bool = false) async throws -> Data {
-        guard let token = session.token else { throw GarminError.needsLogin }
-        if token.isExpired, !isRetry {
-            _ = await session.refreshSilently()
-        }
-        guard let current = session.token else { throw GarminError.needsLogin }
+    private func get(path: String) async throws -> Data {
+        guard session.token != nil else { throw GarminError.needsLogin }
 
-        // Primary: the web app's own host with the DI-Backend proxy header.
-        // Fallback: connectapi.garmin.com directly — same bearer token works
-        // there, and it survives changes to the web proxy routing.
+        // Primary: fetch() inside the logged-in hidden webview — the only
+        // path that reliably passes Garmin's bot protection.
+        do {
+            return try await GarminWebFetcher.shared.fetch(path: path)
+        } catch GarminError.needsLogin {
+            session.needsLogin = true
+            throw GarminError.needsLogin
+        } catch {
+            DebugLog.shared.add("webfetch failed, trying direct: \(error)")
+        }
+
+        // Fallback: direct URLSession against both hosts.
+        guard let current = session.token else { throw GarminError.needsLogin }
         let (status, data) = try await perform(host: "connect.garmin.com", path: path,
                                                token: current.accessToken, diBackend: true)
+        DebugLog.shared.add("direct connect \(status) \(path.prefix(60))")
         if (200...299).contains(status) { return data }
 
         let (status2, data2) = try await perform(host: "connectapi.garmin.com", path: path,
                                                  token: current.accessToken, diBackend: false)
+        DebugLog.shared.add("direct connectapi \(status2) \(path.prefix(60))")
         if (200...299).contains(status2) { return data2 }
 
         if [401, 403].contains(status) || [401, 403].contains(status2) {
-            if !isRetry, await session.refreshSilently() {
-                return try await get(path: path, isRetry: true)
-            }
             session.needsLogin = true
             throw GarminError.needsLogin
         }
