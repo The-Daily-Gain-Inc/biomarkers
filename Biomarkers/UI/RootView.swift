@@ -17,9 +17,12 @@ struct RootView: View {
             WeeklyZonesView()
                 .tabItem { Label("HR Zones", systemImage: "heart.text.square") }
                 .tag(2)
+            LifeView()
+                .tabItem { Label("Life", systemImage: "target") }
+                .tag(3)
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
-                .tag(3)
+                .tag(4)
         }
         .sheet(isPresented: $showGarminLogin) {
             GarminLoginSheet()

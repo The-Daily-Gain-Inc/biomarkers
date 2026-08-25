@@ -18,6 +18,9 @@ struct BiomarkersApp: App {
                 .environmentObject(sync)
                 .environmentObject(zones)
         }
-        .modelContainer(for: [CachedActivity.self, DailyMetric.self])
+        .modelContainer(for: [
+            CachedActivity.self, DailyMetric.self,
+            RetroRow.self, RetroColumn.self, RetroCell.self, RetroDream.self, LongevityRule.self,
+        ])
     }
 }
