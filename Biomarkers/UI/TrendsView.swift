@@ -14,8 +14,17 @@ struct TrendsView: View {
     @AppStorage("weeksOfHistory") private var weeksOfHistory = 6
 
     private let rowHeight: CGFloat = 44
-    private let colWidth: CGFloat = 84
-    private let nameWidth: CGFloat = 130
+    private let colWidth: CGFloat = 92
+    private let nameWidth: CGFloat = 122
+
+    /// Whether a higher value is the healthier direction for each metric.
+    /// Used to color the week-over-week arrow green (better) or red (worse).
+    private static let higherIsBetter: [String: Bool] = [
+        "workout_cal": true, "gym": true, "vo2": true, "fit_age": false,
+        "load": true, "rhr": false, "stress": false, "steps": true,
+        "o_hrv": true, "o_stress": false, "o_activity": true, "spo2": true,
+        "years": true, "sleep_score": true, "sleep_hours": true,
+    ]
 
     private var cal: Calendar { Calendar.current }
 
@@ -85,9 +94,7 @@ struct TrendsView: View {
             }
             .frame(width: colWidth, height: rowHeight)
             ForEach(DashboardModel.placeholders) { metric in
-                Text(cell(id: metric.id, week: week) ?? "—")
-                    .font(.system(.callout, design: .rounded))
-                    .foregroundStyle(cell(id: metric.id, week: week) == nil ? .secondary : .primary)
+                cellView(id: metric.id, index: index, week: week)
                     .frame(width: colWidth, height: rowHeight)
                     .overlay(alignment: .bottom) { Divider() }
             }
@@ -99,41 +106,70 @@ struct TrendsView: View {
         "\(week.start.formatted(.dateTime.month(.abbreviated).day()))–\(week.end.formatted(.dateTime.day()))"
     }
 
-    // MARK: - Cell values
+    // MARK: - Cell rendering
 
-    private func cell(id: String, week: (start: Date, end: Date)) -> String? {
-        if DashboardModel.activityMetricIds.contains(id) {
-            return activityCell(id: id, week: week)
+    @ViewBuilder
+    private func cellView(id: String, index: Int, week: (start: Date, end: Date)) -> some View {
+        let value = numericValue(id: id, week: week)
+        HStack(spacing: 3) {
+            Text(value.map { formatted(id: id, $0) } ?? "—")
+                .font(.system(.callout, design: .rounded))
+                .foregroundStyle(value == nil ? .secondary : .primary)
+            indicator(id: id, index: index, current: value)
         }
-        return dailyCell(id: id, week: week)
     }
 
-    private func dailyCell(id: String, week: (start: Date, end: Date)) -> String? {
+    /// Green/red up/down arrow comparing this week to the prior (older) week.
+    @ViewBuilder
+    private func indicator(id: String, index: Int, current: Double?) -> some View {
+        let prevWeek = index + 1 < weeks.count ? weeks[index + 1] : nil
+        if let current, let prevWeek, let prev = numericValue(id: id, week: prevWeek), current != prev {
+            let up = current > prev
+            let better = (Self.higherIsBetter[id] ?? true) == up
+            Image(systemName: up ? "arrow.up" : "arrow.down")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(better ? Color.green : Color.red)
+        }
+    }
+
+    private func formatted(id: String, _ value: Double) -> String {
+        if let spec = DashboardModel.specs[id] { return spec.format(value) }
+        return String(Int(value))   // activity metrics
+    }
+
+    // MARK: - Cell values
+
+    private func numericValue(id: String, week: (start: Date, end: Date)) -> Double? {
+        if DashboardModel.activityMetricIds.contains(id) {
+            return activityValue(id: id, week: week)
+        }
+        return dailyValue(id: id, week: week)
+    }
+
+    private func dailyValue(id: String, week: (start: Date, end: Date)) -> Double? {
         guard let spec = DashboardModel.specs[id] else { return nil }
         let rows = dailyMetrics.filter { $0.metricKey == id && $0.day >= week.start && $0.day <= week.end }
         guard !rows.isEmpty else { return nil }
-        let headline: Double
         switch spec.agg {
-        case .avg: headline = rows.map(\.value).reduce(0, +) / Double(rows.count)
-        case .latest: headline = rows.max(by: { $0.day < $1.day })?.value ?? 0
+        case .avg: return rows.map(\.value).reduce(0, +) / Double(rows.count)
+        case .latest: return rows.max(by: { $0.day < $1.day })?.value
         }
-        return spec.format(headline)
     }
 
-    private func activityCell(id: String, week: (start: Date, end: Date)) -> String? {
+    private func activityValue(id: String, week: (start: Date, end: Date)) -> Double? {
         let endExclusive = cal.date(byAdding: .day, value: 1, to: week.end)!
         let inWeek = activities.filter { $0.startDate >= week.start && $0.startDate < endExclusive }
         guard !inWeek.isEmpty else { return nil }
         switch id {
         case "workout_cal":
             let sum = inWeek.map(\.calories).reduce(0, +)
-            return sum > 0 ? String(Int(sum)) : nil
+            return sum > 0 ? sum : nil
         case "gym":
             let gymKeys = ["strength_training", "fitness_equipment", "indoor_cardio", "hiit", "yoga", "pilates"]
-            return String(inWeek.filter { a in gymKeys.contains(where: { a.typeKey.contains($0) }) }.count)
+            return Double(inWeek.filter { a in gymKeys.contains(where: { a.typeKey.contains($0) }) }.count)
         case "load":
             let sum = inWeek.map(\.trainingLoad).reduce(0, +)
-            return sum > 0 ? String(Int(sum)) : nil
+            return sum > 0 ? sum : nil
         default:
             return nil
         }
