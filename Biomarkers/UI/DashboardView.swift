@@ -47,21 +47,20 @@ struct DashboardView: View {
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal)
-                .padding(.bottom, 4)
+                .padding(.bottom, 6)
+
+                AppShortcuts()
+                    .padding(.horizontal)
+                    .padding(.bottom, 10)
 
                 if mode == .today {
                     TodayCard()
                         .padding(.horizontal)
-                        .padding(.bottom, 4)
+                        .padding(.bottom, 10)
                     ProfileCard()
                         .padding(.horizontal)
                 } else {
-                    LazyVGrid(columns: columns, spacing: 12) {
-                        ForEach(model.metrics.filter { $0.value != nil }) { metric in
-                            MetricTile(metric: metric)
-                        }
-                    }
-                    .padding(.horizontal)
+                    weekGrid
                 }
             }
             .swipeSegments($mode)
@@ -96,6 +95,30 @@ struct DashboardView: View {
                 LogEntryView()
             }
         }
+    }
+
+    /// The "Last 7 Days" grid, organized into a section per provider so it
+    /// reads as a structured report rather than an undifferentiated wall.
+    private var weekGrid: some View {
+        let visible = model.metrics.filter { $0.value != nil }
+        let order: [Metric.Provider] = [.garmin, .oura, .renpho, .manual]
+        return VStack(alignment: .leading, spacing: 18) {
+            ForEach(order, id: \.self) { provider in
+                let group = visible.filter { $0.provider == provider }
+                if !group.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(provider.rawValue.uppercased())
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 4)
+                        LazyVGrid(columns: columns, spacing: 12) {
+                            ForEach(group) { MetricTile(metric: $0) }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal)
     }
 
     private func reload() async {
@@ -140,48 +163,67 @@ struct TodayCard: View {
 
     private let cols = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
 
+    private struct Item { let title: String; let value: String?; let unit: String?; let tint: Color }
+
+    private var items: [Item] {
+        [
+            Item(title: "Readiness", value: score("readiness"), unit: nil, tint: Color(hex: 0x2FA36B)),
+            Item(title: "Sleep", value: score("sleep_score"), unit: nil, tint: Color(hex: 0x5B6CF0)),
+            Item(title: "Stress", value: latest("o_stress").map { String(format: "%.1f", $0) }, unit: "h", tint: Color(hex: 0xE0791F)),
+            Item(title: "Activity", value: score("o_activity"), unit: nil, tint: Color(hex: 0x00A6A0)),
+            Item(title: "Steps", value: score("steps"), unit: nil, tint: Color(hex: 0x2E8BE6)),
+            Item(title: "HRV", value: score("o_hrv"), unit: "ms", tint: Color(hex: 0x8A6BD6)),
+            Item(title: "Resting HR", value: score("rhr"), unit: "bpm", tint: Color(hex: 0xD1477A)),
+        ]
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            LazyVGrid(columns: cols, spacing: 14) {
-                stat("Readiness", score("readiness"), nil)
-                stat("Sleep", score("sleep_score"), nil)
-                stat("Stress", latest("o_stress").map { String(format: "%.1f", $0) }, "h")
-                stat("Activity", score("o_activity"), nil)
-                stat("Steps", score("steps"), nil)
-                stat("HRV", score("o_hrv"), "ms")
-                stat("Resting HR", score("rhr"), "bpm")
+        VStack(alignment: .leading, spacing: 14) {
+            LazyVGrid(columns: cols, spacing: 10) {
+                ForEach(items, id: \.title) { cell($0) }
             }
             Divider()
-            HStack(spacing: 14) {
-                updated("Oura", ouraTS)
-                updated("Garmin", garminTS)
-                updated("Renpho", renphoTS)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Last synced").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                HStack(spacing: 14) {
+                    updated("Oura", ouraTS, Color(hex: 0x6C5CE7))
+                    updated("Garmin", garminTS, Color(hex: 0x007CC3))
+                    updated("Renpho", renphoTS, Color(hex: 0x00B3A4))
+                }
+                .font(.caption2)
             }
-            .font(.caption2)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
     }
 
-    private func stat(_ title: String, _ value: String?, _ unit: String?) -> some View {
-        VStack(spacing: 3) {
+    private func cell(_ item: Item) -> some View {
+        VStack(spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text(value ?? "—").font(.system(.title2, design: .rounded, weight: .semibold))
-                if let unit, value != nil { Text(unit).font(.caption2).foregroundStyle(.secondary) }
+                Text(item.value ?? "—")
+                    .font(.system(.title2, design: .rounded, weight: .bold))
+                    .foregroundStyle(item.value == nil ? Color.secondary : item.tint)
+                if let unit = item.unit, item.value != nil {
+                    Text(unit).font(.caption2).foregroundStyle(.secondary)
+                }
             }
-            Text(LocalizedStringKey(title)).font(.caption2).foregroundStyle(.secondary)
+            Text(LocalizedStringKey(item.title)).font(.caption2).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(item.tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
     }
 
-    private func updated(_ name: String, _ ts: Double) -> some View {
-        VStack(spacing: 1) {
-            Text(name).foregroundStyle(.secondary)
-            Text(ts > 0 ? relative(ts) : "—")
-                .foregroundStyle(ts > 0 ? .primary : .tertiary)
+    private func updated(_ name: String, _ ts: Double, _ color: Color) -> some View {
+        HStack(spacing: 5) {
+            Circle().fill(ts > 0 ? color : Color.secondary.opacity(0.4)).frame(width: 7, height: 7)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(name).foregroundStyle(.secondary)
+                Text(ts > 0 ? relative(ts) : "—").foregroundStyle(ts > 0 ? .primary : .tertiary)
+            }
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func relative(_ ts: Double) -> String {
