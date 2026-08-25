@@ -42,9 +42,6 @@ struct DashboardView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal)
                 }
-                TodayCard()
-                    .padding(.horizontal)
-                    .padding(.bottom, 4)
                 Picker("Mode", selection: $mode) {
                     ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
