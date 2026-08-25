@@ -105,16 +105,31 @@ struct ConnectBanner: View {
     }
 }
 
-/// Read-only personal reference stats, shown at the top of the dashboard.
+/// Personal reference stats. Weight and protein targets are derived from the
+/// latest cached Renpho weight; min protein = weight(lb) × 0.55, target = +40.
 struct ProfileCard: View {
-    private let items: [(String, String)] = [
-        ("Age", "\(ProfileConstants.age)"),
-        ("Height", "\(ProfileConstants.heightCm) cm"),
-        ("Weight", String(format: "%.1f lb", ProfileConstants.weightLbs)),
-        ("Min protein", String(format: "%.0f g", ProfileConstants.minProteinG)),
-        ("Target protein", String(format: "%.0f g", ProfileConstants.targetProteinG)),
-        ("Baseline kcal", "\(ProfileConstants.baselineCalories)"),
-    ]
+    @Query(filter: #Predicate<DailyMetric> { $0.metricKey == "rp_weight" },
+           sort: \DailyMetric.day, order: .reverse)
+    private var weights: [DailyMetric]
+
+    /// Renpho stores kg; guard in case a value already arrives in lb.
+    private var weightLb: Double {
+        guard let v = weights.first?.value else { return ProfileConstants.weightLbs }
+        return v < 120 ? v * 2.20462 : v
+    }
+    private var minProtein: Double { weightLb * 0.55 }
+    private var targetProtein: Double { minProtein + 40 }
+
+    private var items: [(String, String)] {
+        [
+            ("Age", "\(ProfileConstants.age)"),
+            ("Height", "\(ProfileConstants.heightCm) cm"),
+            ("Weight", String(format: "%.1f lb", weightLb)),
+            ("Min protein", String(format: "%.0f g", minProtein)),
+            ("Target protein", String(format: "%.0f g", targetProtein)),
+            ("Baseline kcal", "\(ProfileConstants.baselineCalories)"),
+        ]
+    }
     private let cols = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
 
     var body: some View {
