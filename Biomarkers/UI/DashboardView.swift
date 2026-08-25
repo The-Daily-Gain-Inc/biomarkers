@@ -15,6 +15,19 @@ struct DashboardView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
+                if !session.isLoggedIn {
+                    ConnectBanner(text: "Garmin not connected") { session.needsLogin = true }
+                }
+                if !ouraSession.isConnected {
+                    ConnectBanner(text: "Oura not connected — connect in Settings", action: nil)
+                }
+                if let error = sync.lastError {
+                    Text(error)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal)
+                }
                 if let progress = sync.progressText {
                     Text(progress)
                         .font(.footnote)
@@ -33,6 +46,12 @@ struct DashboardView: View {
             .navigationTitle(Text("Last 7 Days"))
             .refreshable { await reload() }
             .task { await reload() }
+            .onChange(of: session.token) { _, token in
+                if token != nil { Task { await reload() } }
+            }
+            .onChange(of: ouraSession.token) { _, token in
+                if token != nil { Task { await reload() } }
+            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     if model.isLoading || sync.isSyncing {
@@ -54,6 +73,27 @@ struct DashboardView: View {
             await sync.sync(context: context, session: session, backfillMonths: backfillMonths)
         }
         await model.load(context: context, garmin: session, oura: ouraSession)
+    }
+}
+
+struct ConnectBanner: View {
+    let text: String
+    let action: (() -> Void)?
+
+    var body: some View {
+        HStack {
+            Image(systemName: "exclamationmark.circle")
+            Text(LocalizedStringKey(text))
+                .font(.footnote)
+            Spacer()
+            if let action {
+                Button("Sign In", action: action)
+                    .font(.footnote.weight(.semibold))
+            }
+        }
+        .padding(10)
+        .background(.yellow.opacity(0.15), in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal)
     }
 }
 

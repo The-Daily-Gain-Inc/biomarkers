@@ -106,31 +106,42 @@ final class GarminClient {
         if token.isExpired, !isRetry {
             _ = await session.refreshSilently()
         }
-        guard let current = session.token,
-              let url = URL(string: "https://connect.garmin.com" + path)
-        else { throw GarminError.needsLogin }
+        guard let current = session.token else { throw GarminError.needsLogin }
 
-        var req = URLRequest(url: url)
-        req.setValue("Bearer \(current.accessToken)", forHTTPHeaderField: "Authorization")
-        req.setValue("connectapi.garmin.com", forHTTPHeaderField: "DI-Backend")
-        req.setValue("NT", forHTTPHeaderField: "NK")
-        req.setValue("application/json", forHTTPHeaderField: "Accept")
-        req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-                     forHTTPHeaderField: "User-Agent")
+        // Primary: the web app's own host with the DI-Backend proxy header.
+        // Fallback: connectapi.garmin.com directly — same bearer token works
+        // there, and it survives changes to the web proxy routing.
+        let (status, data) = try await perform(host: "connect.garmin.com", path: path,
+                                               token: current.accessToken, diBackend: true)
+        if (200...299).contains(status) { return data }
 
-        let (data, response) = try await URLSession.shared.data(for: req)
-        guard let http = response as? HTTPURLResponse else { throw GarminError.badResponse }
-        switch http.statusCode {
-        case 200...299:
-            return data
-        case 401, 403:
+        let (status2, data2) = try await perform(host: "connectapi.garmin.com", path: path,
+                                                 token: current.accessToken, diBackend: false)
+        if (200...299).contains(status2) { return data2 }
+
+        if [401, 403].contains(status) || [401, 403].contains(status2) {
             if !isRetry, await session.refreshSilently() {
                 return try await get(path: path, isRetry: true)
             }
             session.needsLogin = true
             throw GarminError.needsLogin
-        default:
-            throw GarminError.http(http.statusCode)
         }
+        throw GarminError.http(status2)
+    }
+
+    private func perform(host: String, path: String, token: String, diBackend: Bool) async throws -> (Int, Data) {
+        guard let url = URL(string: "https://\(host)" + path) else { throw GarminError.badResponse }
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if diBackend {
+            req.setValue("connectapi.garmin.com", forHTTPHeaderField: "DI-Backend")
+        }
+        req.setValue("NT", forHTTPHeaderField: "NK")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+                     forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse else { throw GarminError.badResponse }
+        return (http.statusCode, data)
     }
 }

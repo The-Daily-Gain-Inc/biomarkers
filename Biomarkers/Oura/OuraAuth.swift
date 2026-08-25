@@ -1,7 +1,6 @@
 import Foundation
-import AuthenticationServices
 
-struct OuraToken: Codable {
+struct OuraToken: Codable, Equatable {
     var accessToken: String
     var refreshToken: String?
     var expiresIn: Double?
@@ -14,23 +13,33 @@ struct OuraToken: Codable {
 }
 
 /// Oura OAuth2 (authorization code flow) plus personal-token fallback.
-/// Redirect URI `biomarkers://oura` must be registered on the Oura app.
+/// The redirect URI registered on the Oura application is thedailygain.ca;
+/// the OuraLoginSheet webview intercepts that redirect to capture the code.
 @MainActor
-final class OuraSession: NSObject, ObservableObject, ASWebAuthenticationPresentationContextProviding {
+final class OuraSession: ObservableObject {
     @Published var token: OuraToken?
+    @Published var lastError: String?
 
     private static let keychainKey = "oura.token"
-    private static let redirectURI = "biomarkers://oura"
-    private var authSession: ASWebAuthenticationSession?
+    static let redirectURI = "https://thedailygain.ca"
 
-    override init() {
-        super.init()
+    init() {
         if let data = Keychain.load(key: Self.keychainKey) {
             token = try? JSONDecoder().decode(OuraToken.self, from: data)
         }
     }
 
     var isConnected: Bool { token != nil }
+
+    static var authorizeURL: URL {
+        var comps = URLComponents(string: "https://cloud.ouraring.com/oauth/authorize")!
+        comps.queryItems = [
+            .init(name: "response_type", value: "code"),
+            .init(name: "client_id", value: Config.ouraClientId),
+            .init(name: "redirect_uri", value: redirectURI),
+        ]
+        return comps.url!
+    }
 
     func setPersonalToken(_ raw: String) {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -40,31 +49,11 @@ final class OuraSession: NSObject, ObservableObject, ASWebAuthenticationPresenta
 
     func disconnect() {
         token = nil
+        lastError = nil
         Keychain.delete(key: Self.keychainKey)
     }
 
-    func startOAuth() {
-        var comps = URLComponents(string: "https://cloud.ouraring.com/oauth/authorize")!
-        comps.queryItems = [
-            .init(name: "response_type", value: "code"),
-            .init(name: "client_id", value: Config.ouraClientId),
-            .init(name: "redirect_uri", value: Self.redirectURI),
-            .init(name: "scope", value: "daily heartrate workout personal"),
-        ]
-        let session = ASWebAuthenticationSession(url: comps.url!, callbackURLScheme: "biomarkers") { [weak self] url, _ in
-            guard let self, let url,
-                  let code = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-                      .queryItems?.first(where: { $0.name == "code" })?.value
-            else { return }
-            Task { await self.exchange(code: code) }
-        }
-        session.presentationContextProvider = self
-        session.prefersEphemeralWebBrowserSession = false
-        authSession = session
-        session.start()
-    }
-
-    private func exchange(code: String) async {
+    func exchange(code: String) async {
         await tokenRequest(body: [
             "grant_type": "authorization_code",
             "code": code,
@@ -91,21 +80,33 @@ final class OuraSession: NSObject, ObservableObject, ASWebAuthenticationPresenta
         var req = URLRequest(url: URL(string: "https://api.ouraring.com/oauth/token")!)
         req.httpMethod = "POST"
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
         req.httpBody = body
-            .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? $0.value)" }
+            .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: allowed) ?? $0.value)" }
             .joined(separator: "&")
             .data(using: .utf8)
-        guard let (data, response) = try? await URLSession.shared.data(for: req),
-              (response as? HTTPURLResponse)?.statusCode == 200,
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let access = obj["access_token"] as? String
-        else { return }
-        save(OuraToken(
-            accessToken: access,
-            refreshToken: obj["refresh_token"] as? String,
-            expiresIn: (obj["expires_in"] as? NSNumber)?.doubleValue,
-            capturedAt: Date()
-        ))
+        do {
+            let (data, response) = try await URLSession.shared.data(for: req)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard status == 200,
+                  let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let access = obj["access_token"] as? String
+            else {
+                let bodyText = String(data: data, encoding: .utf8) ?? ""
+                lastError = "Oura token exchange failed (\(status)): \(bodyText.prefix(200))"
+                return
+            }
+            lastError = nil
+            save(OuraToken(
+                accessToken: access,
+                refreshToken: obj["refresh_token"] as? String,
+                expiresIn: (obj["expires_in"] as? NSNumber)?.doubleValue,
+                capturedAt: Date()
+            ))
+        } catch {
+            lastError = error.localizedDescription
+        }
     }
 
     private func save(_ token: OuraToken) {
@@ -113,9 +114,5 @@ final class OuraSession: NSObject, ObservableObject, ASWebAuthenticationPresenta
         if let data = try? JSONEncoder().encode(token) {
             Keychain.save(data, key: Self.keychainKey)
         }
-    }
-
-    nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        MainActor.assumeIsolated { ASPresentationAnchor() }
     }
 }

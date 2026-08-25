@@ -1,6 +1,22 @@
 import SwiftUI
 import WebKit
 
+/// Looks for the OAuth token under the usual localStorage key, then falls
+/// back to scanning every key for something containing an access_token —
+/// defends against Garmin renaming the key.
+let garminTokenExtractionJS = """
+(function () {
+  var t = window.localStorage.getItem('token');
+  if (t && t.indexOf('access_token') >= 0) { return t; }
+  for (var i = 0; i < window.localStorage.length; i++) {
+    var k = window.localStorage.key(i);
+    var v = window.localStorage.getItem(k);
+    if (v && v.length < 10000 && v.indexOf('access_token') >= 0) { return v; }
+  }
+  return null;
+})()
+"""
+
 /// Interactive Garmin Connect sign-in. Shows the real Garmin SSO page in a
 /// webview; once the app lands back on connect.garmin.com we lift the OAuth
 /// token from localStorage and hand it to the SessionStore.
@@ -35,12 +51,12 @@ struct GarminLoginView: UIViewRepresentable {
                   let url = webView.url, url.host?.contains("connect.garmin.com") == true,
                   !url.path.contains("signin")
             else { return }
-            webView.evaluateJavaScript("window.localStorage.getItem('token')") { [weak self] result, _ in
+            webView.evaluateJavaScript(garminTokenExtractionJS) { [weak self] result, _ in
                 guard let self, !self.done else { return }
                 if let json = result as? String, !json.isEmpty {
                     self.done = true
                     self.onToken(json)
-                } else if self.attempts < 8 {
+                } else if self.attempts < 20 {
                     self.attempts += 1
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self, weak webView] in
                         guard let webView else { return }
@@ -58,10 +74,17 @@ struct GarminLoginSheet: View {
 
     var body: some View {
         NavigationStack {
-            GarminLoginView { json in
-                if session.store(localStorageJSON: json) {
-                    dismiss()
+            VStack(spacing: 0) {
+                GarminLoginView { json in
+                    if session.store(localStorageJSON: json) {
+                        dismiss()
+                    }
                 }
+                Text("After signing in, keep this open — it closes by itself once the session is captured.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(10)
             }
             .navigationTitle(Text("Garmin Sign In"))
             .navigationBarTitleDisplayMode(.inline)

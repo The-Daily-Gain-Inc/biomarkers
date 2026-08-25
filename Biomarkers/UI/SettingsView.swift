@@ -8,6 +8,7 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var context
     @AppStorage("backfillMonths") private var backfillMonths = 6
     @State private var showGarminLogin = false
+    @State private var showOuraLogin = false
     @State private var ouraTokenInput = ""
     @State private var cachedCount = 0
 
@@ -58,7 +59,7 @@ struct SettingsView: View {
                             .foregroundStyle(.green)
                         Button("Disconnect", role: .destructive) { ouraSession.disconnect() }
                     } else {
-                        Button("Connect with Oura (OAuth)") { ouraSession.startOAuth() }
+                        Button("Connect with Oura") { showOuraLogin = true }
                         SecureField(String(localized: "Or paste a personal access token"), text: $ouraTokenInput)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
@@ -68,10 +69,13 @@ struct SettingsView: View {
                         }
                         .disabled(ouraTokenInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
+                    if let error = ouraSession.lastError {
+                        Text(error).font(.caption).foregroundStyle(.red)
+                    }
                 } header: {
                     Text("Oura")
                 } footer: {
-                    Text("OAuth requires the redirect URI biomarkers://oura registered on your Oura application.")
+                    Text("Signs in via Oura OAuth (redirect to thedailygain.ca is intercepted in-app). Personal tokens can be created at cloud.ouraring.com.")
                 }
 
                 Section {
@@ -86,6 +90,7 @@ struct SettingsView: View {
             }
             .navigationTitle(Text("Settings"))
             .sheet(isPresented: $showGarminLogin) { GarminLoginSheet() }
+            .sheet(isPresented: $showOuraLogin) { OuraLoginSheet() }
             .onAppear(perform: updateCount)
         }
     }

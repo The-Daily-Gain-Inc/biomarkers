@@ -3,7 +3,7 @@ import Foundation
 /// OAuth2 bearer token as the Garmin Connect web app stores it in
 /// localStorage under the key "token". Parsed defensively: only
 /// access_token is required, everything else is optional.
-struct GarminToken: Codable {
+struct GarminToken: Codable, Equatable {
     var accessToken: String
     var refreshToken: String?
     var expiresIn: Double?

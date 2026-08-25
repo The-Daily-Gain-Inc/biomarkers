@@ -94,7 +94,7 @@ final class HiddenTokenRefresher: NSObject, WKNavigationDelegate {
             if webView.url?.host?.contains("sso") == true { finish(nil) }
             return
         }
-        webView.evaluateJavaScript("window.localStorage.getItem('token')") { [weak self] result, _ in
+        webView.evaluateJavaScript(garminTokenExtractionJS) { [weak self] result, _ in
             guard let self else { return }
             if let json = result as? String, !json.isEmpty {
                 self.finish(json)
