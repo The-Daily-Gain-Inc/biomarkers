@@ -11,6 +11,7 @@ struct DashboardView: View {
     @StateObject private var model = DashboardModel()
     @AppStorage("backfillMonths") private var backfillMonths = 6
     @State private var showGarminLogin = false
+    @State private var showLog = false
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
@@ -61,6 +62,9 @@ struct DashboardView: View {
                 if token != nil { Task { await reload() } }
             }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { showLog = true } label: { Label("Log", systemImage: "square.and.pencil") }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     if model.isLoading || sync.isSyncing {
                         ProgressView()
@@ -72,6 +76,9 @@ struct DashboardView: View {
                         }
                     }
                 }
+            }
+            .sheet(isPresented: $showLog, onDismiss: { Task { await reload() } }) {
+                LogEntryView()
             }
         }
     }

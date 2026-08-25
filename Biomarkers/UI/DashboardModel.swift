@@ -6,6 +6,7 @@ struct Metric: Identifiable {
         case garmin = "Garmin"
         case oura = "Oura"
         case renpho = "Renpho"
+        case manual = "Manual"
     }
 
     let id: String
@@ -28,6 +29,18 @@ final class DashboardModel: ObservableObject {
 
     /// Activity-derived tiles summed per week (not stored in DailyMetric).
     static let activityMetricIds: Set<String> = ["workout_cal", "gym", "load"]
+
+    /// Manually-entered metrics: (key, label, unit). Logged via the Log sheet,
+    /// cached like everything else so they appear on the dashboard and Trends.
+    static let manualMetrics: [(key: String, label: String, unit: String?)] = [
+        ("glucose", "Glucose", "mg/dL"),
+        ("bp_sys", "BP Systolic", "mmHg"),
+        ("bp_dia", "BP Diastolic", "mmHg"),
+        ("ear", "Ear Health", "/10"),
+        ("porn", "Porn", "/wk"),
+        ("reading", "Reading", nil),
+        ("meditation", "Meditation", nil),
+    ]
 
     static let placeholders: [Metric] = [
         .init(id: "workout_cal", titleKey: "Calories Burned", provider: .garmin, unit: "kcal"),
@@ -53,7 +66,9 @@ final class DashboardModel: ObservableObject {
         .init(id: "rp_bmi", titleKey: "BMI", provider: .renpho),
         .init(id: "rp_bmr", titleKey: "BMR", provider: .renpho, unit: "kcal"),
         .init(id: "rp_bone", titleKey: "Bone Mass", provider: .renpho, unit: "kg"),
-    ]
+    ] + DashboardModel.manualMetrics.map {
+        Metric(id: $0.key, titleKey: $0.label, provider: .manual, unit: $0.unit)
+    }
 
     /// How each cached-metric tile aggregates its 7-day series into a headline.
     enum Agg { case avg, latest }
@@ -80,6 +95,14 @@ final class DashboardModel: ObservableObject {
         "rp_bmi":      .init(agg: .latest, format: { String(format: "%.1f", $0) }),
         "rp_bmr":      .init(agg: .latest, format: { String(Int($0.rounded())) }),
         "rp_bone":     .init(agg: .latest, format: { String(format: "%.1f", $0) }),
+        // Manual metrics — latest reading is the headline.
+        "glucose":     .init(agg: .latest, format: { String(Int($0.rounded())) }),
+        "bp_sys":      .init(agg: .latest, format: { String(Int($0.rounded())) }),
+        "bp_dia":      .init(agg: .latest, format: { String(Int($0.rounded())) }),
+        "ear":         .init(agg: .latest, format: { String(Int($0.rounded())) }),
+        "porn":        .init(agg: .latest, format: { String(Int($0.rounded())) }),
+        "reading":     .init(agg: .latest, format: { String(Int($0.rounded())) }),
+        "meditation":  .init(agg: .latest, format: { String(Int($0.rounded())) }),
     ]
 
     private func set(_ id: String, value: String?, series: [Double] = []) {

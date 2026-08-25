@@ -72,7 +72,9 @@ struct DreamsSection: View {
                                     .foregroundStyle(.green)
                             }
                             Text(dream.rationale)
-                                .font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .multilineTextAlignment(.leading)
                         }
                     }
                 }

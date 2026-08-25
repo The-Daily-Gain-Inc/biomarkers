@@ -28,6 +28,8 @@ struct TrendsView: View {
         "rp_bodyfat": false, "rp_weight": false, "rp_muscle": true,
         "rp_water": true, "rp_visfat": false, "rp_bmi": false,
         "rp_bmr": true, "rp_bone": true,
+        "glucose": false, "bp_sys": false, "bp_dia": false, "ear": true,
+        "porn": false, "reading": true, "meditation": true,
     ]
 
     private var cal: Calendar { Calendar.current }
