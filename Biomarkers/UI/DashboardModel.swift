@@ -25,7 +25,6 @@ final class DashboardModel: ObservableObject {
     static let placeholders: [Metric] = [
         .init(id: "workout_cal", titleKey: "Calories Burned", provider: .garmin, unit: "kcal"),
         .init(id: "gym", titleKey: "Gym & Fitness", provider: .garmin, unit: "workouts"),
-        .init(id: "g_hrv", titleKey: "HRV", provider: .garmin, unit: "ms"),
         .init(id: "vo2", titleKey: "VO2 Max", provider: .garmin),
         .init(id: "fit_age", titleKey: "Fitness Age", provider: .garmin, unit: "yrs"),
         .init(id: "load", titleKey: "Training Load", provider: .garmin),
@@ -91,10 +90,7 @@ final class DashboardModel: ObservableObject {
         set("rhr", value: rhr.isEmpty ? nil : String(Int(rhr.reduce(0, +) / Double(rhr.count))), series: rhr)
         set("stress", value: stress.isEmpty ? nil : String(Int(stress.reduce(0, +) / Double(stress.count))), series: stress)
 
-        if let rows = try? await client.hrvDaily(start: windowStart, end: Date()) {
-            let vals = rows.compactMap { ($0["lastNightAvg"] as? NSNumber)?.doubleValue }
-            set("g_hrv", value: vals.isEmpty ? nil : String(Int(vals.reduce(0, +) / Double(vals.count))), series: vals)
-        }
+        // HRV comes from Oura only — Garmin HRV intentionally not fetched.
         if let rows = try? await client.vo2maxDaily(start: windowStart, end: Date()) {
             let vals = rows.compactMap { ((($0["generic"] as? [String: Any])?["vo2MaxPreciseValue"]) as? NSNumber)?.doubleValue }
             if let last = vals.last { set("vo2", value: String(format: "%.1f", last), series: vals) }

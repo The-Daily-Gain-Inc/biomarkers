@@ -21,7 +21,10 @@ final class SyncEngine: ObservableObject {
         }
 
         let client = GarminClient(session: session)
-        let horizon = Calendar.current.date(byAdding: .month, value: -backfillMonths, to: Date()) ?? .distantPast
+        // backfillMonths == 0 means all time.
+        let horizon = backfillMonths == 0
+            ? Date.distantPast
+            : (Calendar.current.date(byAdding: .month, value: -backfillMonths, to: Date()) ?? .distantPast)
         var knownIds = Set<Int>()
         if let existing = try? context.fetch(FetchDescriptor<CachedActivity>()) {
             knownIds = Set(existing.map(\.activityId))

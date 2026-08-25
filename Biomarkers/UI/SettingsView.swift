@@ -24,8 +24,15 @@ struct SettingsView: View {
                     } else {
                         Button("Sign In to Garmin") { showGarminLogin = true }
                     }
-                    Stepper(value: $backfillMonths, in: 1...24) {
-                        Text("Backfill: \(backfillMonths) months")
+                    Picker(selection: $backfillMonths) {
+                        Text("1 month").tag(1)
+                        Text("3 months").tag(3)
+                        Text("6 months").tag(6)
+                        Text("1 year").tag(12)
+                        Text("2 years").tag(24)
+                        Text("All time").tag(0)
+                    } label: {
+                        Text("Backfill")
                     }
                     Button {
                         Task { await sync.sync(context: context, session: session, backfillMonths: backfillMonths) }

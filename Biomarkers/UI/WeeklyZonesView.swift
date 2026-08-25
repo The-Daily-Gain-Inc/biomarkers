@@ -34,9 +34,35 @@ struct WeeklyZonesView: View {
         }
     }
 
+    private var last7Days: [Date] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        return (0..<7).map { cal.date(byAdding: .day, value: -6 + $0, to: today)! }
+    }
+
+    /// Per-day zone seconds for the trailing 7 days (index 0 = oldest).
+    private var dailyZoneSeconds: [(date: Date, zones: [Double])] {
+        let cal = Calendar.current
+        return last7Days.map { day in
+            let dayActs = activities.filter { cal.isDate($0.startDate, inSameDayAs: day) }
+            let zones = dayActs.reduce(into: [Double](repeating: 0, count: 5)) { acc, a in
+                for (i, s) in a.fiveZoneSeconds.enumerated() { acc[i] += s }
+            }
+            return (day, zones)
+        }
+    }
+
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    dailyChart
+                        .listRowSeparator(.hidden)
+                    zoneLegend
+                        .listRowSeparator(.hidden)
+                } header: {
+                    Text("Last 7 Days")
+                }
                 Section {
                     weekPicker
                     zoneChart
@@ -62,6 +88,59 @@ struct WeeklyZonesView: View {
                 await sync.sync(context: context, session: session, backfillMonths: backfillMonths)
             }
         }
+    }
+
+    /// Stacked minutes-per-zone for each of the last 7 days.
+    private var dailyChart: some View {
+        let data = dailyZoneSeconds
+        let hasData = data.contains { $0.zones.reduce(0, +) > 0 }
+        return Group {
+            if hasData {
+                Chart {
+                    ForEach(Array(data.enumerated()), id: \.offset) { _, day in
+                        ForEach(1...5, id: \.self) { zone in
+                            let mins = day.zones[zone - 1] / 60
+                            if mins > 0 {
+                                BarMark(
+                                    x: .value("Day", day.date, unit: .day),
+                                    y: .value("Minutes", mins)
+                                )
+                                .foregroundStyle(ZonePalette.color(zone: zone, scheme: scheme))
+                            }
+                        }
+                    }
+                }
+                .chartXAxis {
+                    AxisMarks(values: .stride(by: .day)) { value in
+                        AxisValueLabel(format: .dateTime.weekday(.narrow))
+                    }
+                }
+                .frame(height: 170)
+                .padding(.vertical, 4)
+            } else {
+                Text("No zone data in the last 7 days")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 24)
+            }
+        }
+    }
+
+    private var zoneLegend: some View {
+        HStack(spacing: 12) {
+            ForEach(1...5, id: \.self) { zone in
+                HStack(spacing: 4) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(ZonePalette.color(zone: zone, scheme: scheme))
+                        .frame(width: 10, height: 10)
+                    Text("Z\(zone)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private var weekPicker: some View {
