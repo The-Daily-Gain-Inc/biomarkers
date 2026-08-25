@@ -11,12 +11,15 @@ struct RootView: View {
             DashboardView()
                 .tabItem { Label("Dashboard", systemImage: "square.grid.2x2") }
                 .tag(0)
+            TrendsView()
+                .tabItem { Label("Trends", systemImage: "tablecells") }
+                .tag(1)
             WeeklyZonesView()
                 .tabItem { Label("HR Zones", systemImage: "heart.text.square") }
-                .tag(1)
+                .tag(2)
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
-                .tag(2)
+                .tag(3)
         }
         .sheet(isPresented: $showGarminLogin) {
             GarminLoginSheet()

@@ -11,6 +11,8 @@ struct SettingsView: View {
     @State private var showOuraLogin = false
     @State private var ouraTokenInput = ""
     @State private var cachedCount = 0
+    @EnvironmentObject private var zones: ZoneStore
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var log = DebugLog.shared
 
     var body: some View {
@@ -84,6 +86,42 @@ struct SettingsView: View {
                     Text("Oura")
                 } footer: {
                     Text("Signs in via Oura OAuth (redirect to thedailygain.ca is intercepted in-app). Personal tokens can be created at cloud.ouraring.com.")
+                }
+
+                Section {
+                    ForEach(1...5, id: \.self) { zone in
+                        HStack {
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(ZonePalette.color(zone: zone, scheme: colorScheme))
+                                .frame(width: 14, height: 14)
+                            Text("Zone \(zone)")
+                            Spacer()
+                            TextField("bpm", value: Binding(
+                                get: { zones.floors[zone - 1] },
+                                set: { zones.set(zone: zone, bpm: $0) }
+                            ), format: .number)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 64)
+                            Text(zone < 5 ? "–\(zones.floors.indices.contains(zone) ? String(zones.floors[zone] - 1) : "")" : "+ bpm")
+                                .foregroundStyle(.secondary)
+                                .frame(width: 56, alignment: .leading)
+                        }
+                    }
+                    Button {
+                        Task { await zones.resetToGarmin(session: session) }
+                    } label: {
+                        if zones.isFetchingDefaults {
+                            HStack { ProgressView(); Text("Fetching from Garmin…") }
+                        } else {
+                            Text("Default to Garmin Zones")
+                        }
+                    }
+                    .disabled(!session.isLoggedIn || zones.isFetchingDefaults)
+                } header: {
+                    Text("Heart Rate Zones")
+                } footer: {
+                    Text("Lower bpm bound for each zone. Historical Garmin activities keep Garmin's own zone split; these bounds label the HR Zones view and bucket raw-sample sources.")
                 }
 
                 Section {

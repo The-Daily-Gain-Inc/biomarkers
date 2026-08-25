@@ -25,6 +25,7 @@ struct GarminActivitySummary: Decodable {
 struct GarminZoneTime: Decodable {
     let zoneNumber: Int?
     let secsInZone: Double?
+    let zoneLowBoundary: Int?
 }
 
 /// Calls Garmin Connect's internal (unofficial) web endpoints, mimicking the
@@ -57,6 +58,20 @@ final class GarminClient {
         let data = try await get(path: "/activity-service/activity/\(activityId)/hrTimeInZones")
         let zones = try JSONDecoder().decode([GarminZoneTime].self, from: data)
         return (zones, data)
+    }
+
+    /// The user's HR zone lower boundaries (bpm), taken from the most recent
+    /// activity that has zone data. Returns 5 ascending bpm floors for Z1…Z5.
+    func hrZoneBoundaries() async throws -> [Int]? {
+        let (summaries, _) = try await activityList(start: 0, limit: 20)
+        for summary in summaries {
+            guard let (zones, _) = try? await hrTimeInZones(activityId: summary.activityId) else { continue }
+            let floors = zones
+                .sorted { ($0.zoneNumber ?? 0) < ($1.zoneNumber ?? 0) }
+                .compactMap { $0.zoneLowBoundary }
+            if floors.count >= 5 { return Array(floors.prefix(5)) }
+        }
+        return nil
     }
 
     // MARK: - Wellness / metrics (dashboard)

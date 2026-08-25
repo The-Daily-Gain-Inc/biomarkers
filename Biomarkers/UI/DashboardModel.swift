@@ -23,6 +23,10 @@ struct Metric: Identifiable {
 final class DashboardModel: ObservableObject {
     @Published var metrics: [Metric] = DashboardModel.placeholders
     @Published var isLoading = false
+    @Published var isLoadingHistory = false
+
+    /// Activity-derived tiles summed per week (not stored in DailyMetric).
+    static let activityMetricIds: Set<String> = ["workout_cal", "gym", "load"]
 
     static let placeholders: [Metric] = [
         .init(id: "workout_cal", titleKey: "Calories Burned", provider: .garmin, unit: "kcal"),
@@ -43,9 +47,9 @@ final class DashboardModel: ObservableObject {
     ]
 
     /// How each cached-metric tile aggregates its 7-day series into a headline.
-    private enum Agg { case avg, latest }
-    private struct Spec { let agg: Agg; let format: (Double) -> String }
-    private static let specs: [String: Spec] = [
+    enum Agg { case avg, latest }
+    struct Spec { let agg: Agg; let format: (Double) -> String }
+    static let specs: [String: Spec] = [
         "steps":       .init(agg: .avg,    format: { String(Int($0.rounded())) }),
         "stress":      .init(agg: .avg,    format: { String(Int($0.rounded())) }),
         "fit_age":     .init(agg: .latest, format: { String(Int($0.rounded())) }),
@@ -86,6 +90,26 @@ final class DashboardModel: ObservableObject {
         try? context.save()
 
         renderFromCache(context: context, days: days)
+    }
+
+    /// Fetches and caches daily metrics over a wider window (for the Trends
+    /// matrix). Reuses the same per-day cache, so it only downloads days not
+    /// already stored.
+    func loadHistory(context: ModelContext, garmin: SessionStore, oura: OuraSession, weeks: Int) async {
+        guard !isLoadingHistory else { return }
+        isLoadingHistory = true
+        defer { isLoadingHistory = false }
+
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let totalDays = weeks * 7
+        let windowStart = cal.date(byAdding: .day, value: -(totalDays - 1), to: today)!
+        let days = (0..<totalDays).map { cal.date(byAdding: .day, value: $0, to: windowStart)! }
+
+        async let g: Void = loadGarmin(context: context, garmin: garmin, days: days)
+        async let o: Void = loadOura(context: context, oura: oura, windowStart: windowStart, todayStart: today)
+        _ = await (g, o)
+        try? context.save()
     }
 
     // MARK: - Cache read

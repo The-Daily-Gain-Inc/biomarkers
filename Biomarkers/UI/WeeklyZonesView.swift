@@ -7,6 +7,7 @@ import Charts
 struct WeeklyZonesView: View {
     @EnvironmentObject var session: SessionStore
     @EnvironmentObject var sync: SyncEngine
+    @EnvironmentObject var zones: ZoneStore
     @Environment(\.modelContext) private var context
     @Environment(\.colorScheme) private var scheme
     @AppStorage("backfillMonths") private var backfillMonths = 6
@@ -128,15 +129,20 @@ struct WeeklyZonesView: View {
     }
 
     private var zoneLegend: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             ForEach(1...5, id: \.self) { zone in
-                HStack(spacing: 4) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(ZonePalette.color(zone: zone, scheme: scheme))
-                        .frame(width: 10, height: 10)
-                    Text("Z\(zone)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                VStack(spacing: 2) {
+                    HStack(spacing: 4) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(ZonePalette.color(zone: zone, scheme: scheme))
+                            .frame(width: 10, height: 10)
+                        Text("Z\(zone)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(zones.rangeLabel(zone: zone))
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
                 }
             }
         }
