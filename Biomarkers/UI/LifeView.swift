@@ -59,14 +59,6 @@ struct DreamsSection: View {
 
     var body: some View {
         List {
-            Section("Profile") {
-                profileRow("Age", "\(ProfileConstants.age)")
-                profileRow("Height", "\(ProfileConstants.heightCm) cm")
-                profileRow("Weight", String(format: "%.1f lbs", ProfileConstants.weightLbs))
-                profileRow("Min protein", String(format: "%.0f g", ProfileConstants.minProteinG))
-                profileRow("Target protein", String(format: "%.0f g", ProfileConstants.targetProteinG))
-                profileRow("Baseline calories", "\(ProfileConstants.baselineCalories)")
-            }
             Section("Dreams") {
                 ForEach(dreams) { dream in
                     Button { editing = dream } label: {
@@ -92,10 +84,6 @@ struct DreamsSection: View {
             }
         }
         .sheet(item: $editing) { DreamEditor(dream: $0) }
-    }
-
-    private func profileRow(_ label: String, _ value: String) -> some View {
-        LabeledContent(label) { Text(value).foregroundStyle(.secondary) }
     }
 }
 

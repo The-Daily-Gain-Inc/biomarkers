@@ -39,8 +39,11 @@ struct DashboardView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal)
                 }
+                ProfileCard()
+                    .padding(.horizontal)
+                    .padding(.bottom, 4)
                 LazyVGrid(columns: columns, spacing: 12) {
-                    ForEach(model.metrics) { metric in
+                    ForEach(model.metrics.filter { $0.value != nil }) { metric in
                         MetricTile(metric: metric)
                     }
                 }
@@ -99,6 +102,33 @@ struct ConnectBanner: View {
         .padding(10)
         .background(.yellow.opacity(0.15), in: RoundedRectangle(cornerRadius: 10))
         .padding(.horizontal)
+    }
+}
+
+/// Read-only personal reference stats, shown at the top of the dashboard.
+struct ProfileCard: View {
+    private let items: [(String, String)] = [
+        ("Age", "\(ProfileConstants.age)"),
+        ("Height", "\(ProfileConstants.heightCm) cm"),
+        ("Weight", String(format: "%.1f lb", ProfileConstants.weightLbs)),
+        ("Min protein", String(format: "%.0f g", ProfileConstants.minProteinG)),
+        ("Target protein", String(format: "%.0f g", ProfileConstants.targetProteinG)),
+        ("Baseline kcal", "\(ProfileConstants.baselineCalories)"),
+    ]
+    private let cols = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
+
+    var body: some View {
+        LazyVGrid(columns: cols, spacing: 10) {
+            ForEach(items, id: \.0) { item in
+                VStack(spacing: 2) {
+                    Text(item.1).font(.system(.callout, design: .rounded, weight: .semibold))
+                    Text(LocalizedStringKey(item.0)).font(.caption2).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
     }
 }
 
