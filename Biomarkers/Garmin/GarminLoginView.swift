@@ -1,69 +1,63 @@
 import SwiftUI
 import WebKit
 
-/// Looks for the OAuth token under the usual localStorage key, then falls
-/// back to scanning every key for something containing an access_token —
-/// defends against Garmin renaming the key.
-let garminTokenExtractionJS = """
-(function () {
-  var t = window.localStorage.getItem('token');
-  if (t && t.indexOf('access_token') >= 0) { return t; }
-  for (var i = 0; i < window.localStorage.length; i++) {
-    var k = window.localStorage.key(i);
-    var v = window.localStorage.getItem(k);
-    if (v && v.length < 10000 && v.indexOf('access_token') >= 0) { return v; }
-  }
-  return null;
-})()
-"""
-
-/// Interactive Garmin Connect sign-in. Shows the real Garmin SSO page in a
-/// webview; once the app lands back on connect.garmin.com we lift the OAuth
-/// token from localStorage and hand it to the SessionStore.
+/// Interactive Garmin SSO sign-in. Loads Garmin's real SSO page (which
+/// handles password, CAPTCHA, and MFA), then captures the service ticket
+/// (ST-…) that the successful login produces. The ticket is exchanged
+/// natively for OAuth tokens — see GarminOAuth.
 struct GarminLoginView: UIViewRepresentable {
-    let onToken: (String) -> Void
+    let onTicket: (String) -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator(onToken: onToken) }
+    func makeCoordinator() -> Coordinator { Coordinator(onTicket: onTicket) }
 
     func makeUIView(context: Context) -> WKWebView {
         let wv = WKWebView(frame: .zero)
         wv.navigationDelegate = context.coordinator
-        wv.load(URLRequest(url: URL(string: "https://connect.garmin.com/signin/")!))
+        wv.load(URLRequest(url: GarminOAuth.signinURL))
         return wv
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 
     final class Coordinator: NSObject, WKNavigationDelegate {
-        let onToken: (String) -> Void
-        private var attempts = 0
+        let onTicket: (String) -> Void
         private var done = false
 
-        init(onToken: @escaping (String) -> Void) { self.onToken = onToken }
+        init(onTicket: @escaping (String) -> Void) { self.onTicket = onTicket }
 
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            attempts = 0
-            tryExtract(from: webView)
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            if let url = navigationAction.request.url, let t = ticket(in: url.absoluteString) {
+                capture(t)
+            }
+            decisionHandler(.allow)
         }
 
-        private func tryExtract(from webView: WKWebView) {
-            guard !done,
-                  let url = webView.url, url.host?.contains("connect.garmin.com") == true,
-                  !url.path.contains("signin")
-            else { return }
-            webView.evaluateJavaScript(garminTokenExtractionJS) { [weak self] result, _ in
-                guard let self, !self.done else { return }
-                if let json = result as? String, !json.isEmpty {
-                    self.done = true
-                    self.onToken(json)
-                } else if self.attempts < 20 {
-                    self.attempts += 1
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self, weak webView] in
-                        guard let webView else { return }
-                        self?.tryExtract(from: webView)
-                    }
-                }
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            guard !done else { return }
+            // The ticket usually appears as a redirect to embed?ticket=ST-…,
+            // but also lands in the page HTML — scan both.
+            if let url = webView.url?.absoluteString, let t = ticket(in: url) {
+                capture(t)
+                return
             }
+            webView.evaluateJavaScript("document.documentElement.outerHTML") { [weak self] result, _ in
+                guard let self, let html = result as? String, let t = self.ticket(in: html) else { return }
+                self.capture(t)
+            }
+        }
+
+        private func ticket(in text: String) -> String? {
+            // Match ST-XXXXX-... up to a quote, ampersand, or whitespace.
+            guard let range = text.range(of: "ST-[0-9A-Za-z._-]+", options: .regularExpression) else { return nil }
+            return String(text[range])
+        }
+
+        private func capture(_ ticket: String) {
+            guard !done else { return }
+            done = true
+            DebugLog.shared.add("captured ticket len=\(ticket.count)")
+            onTicket(ticket)
         }
     }
 }
@@ -71,20 +65,26 @@ struct GarminLoginView: UIViewRepresentable {
 struct GarminLoginSheet: View {
     @EnvironmentObject var session: SessionStore
     @Environment(\.dismiss) private var dismiss
+    @State private var exchanging = false
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                GarminLoginView { json in
-                    if session.store(localStorageJSON: json) {
-                        dismiss()
+            ZStack {
+                GarminLoginView { ticket in
+                    exchanging = true
+                    Task {
+                        let ok = await session.completeLogin(ticket: ticket)
+                        exchanging = false
+                        if ok { dismiss() }
                     }
                 }
-                Text("After signing in, keep this open — it closes by itself once the session is captured.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(10)
+                if exchanging {
+                    ProgressView {
+                        Text("Connecting…")
+                    }
+                    .padding(20)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                }
             }
             .navigationTitle(Text("Garmin Sign In"))
             .navigationBarTitleDisplayMode(.inline)

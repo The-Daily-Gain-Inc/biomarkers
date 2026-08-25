@@ -101,50 +101,43 @@ final class GarminClient {
         return try await json(path: "/fitnessage-service/fitnessage/\(day)") as? [String: Any] ?? [:]
     }
 
-    private func get(path: String) async throws -> Data {
-        guard session.token != nil else { throw GarminError.needsLogin }
-
-        // Primary: fetch() inside the logged-in hidden webview — the only
-        // path that reliably passes Garmin's bot protection.
-        do {
-            return try await GarminWebFetcher.shared.fetch(path: path)
-        } catch GarminError.needsLogin {
-            session.needsLogin = true
-            throw GarminError.needsLogin
-        } catch {
-            DebugLog.shared.add("webfetch failed, trying direct: \(error)")
-        }
-
-        // Fallback: direct URLSession against both hosts.
+    private func get(path: String, refreshed: Bool = false) async throws -> Data {
         guard let current = session.token else { throw GarminError.needsLogin }
-        let (status, data) = try await perform(host: "connect.garmin.com", path: path,
-                                               token: current.accessToken, diBackend: true)
-        DebugLog.shared.add("direct connect \(status) \(path.prefix(60))")
+
+        // connectapi.garmin.com accepts the OAuth2 bearer directly with a
+        // Garmin mobile User-Agent — the host the garth/garminconnect
+        // libraries use. It is NOT behind the web bot-wall that guards
+        // connect.garmin.com, so plain URLSession works here.
+        let (status, data) = try await perform(host: "connectapi.garmin.com", path: path,
+                                               token: current.accessToken)
+        DebugLog.shared.add("connectapi \(status) \(path.prefix(55))")
         if (200...299).contains(status) { return data }
 
-        let (status2, data2) = try await perform(host: "connectapi.garmin.com", path: path,
-                                                 token: current.accessToken, diBackend: false)
-        DebugLog.shared.add("direct connectapi \(status2) \(path.prefix(60))")
-        if (200...299).contains(status2) { return data2 }
-
-        if [401, 403].contains(status) || [401, 403].contains(status2) {
+        if [401, 403].contains(status), !refreshed {
+            // Bearer stale — re-mint from the webview session and retry once.
+            if await session.refreshSilently() {
+                return try await get(path: path, refreshed: true)
+            }
             session.needsLogin = true
             throw GarminError.needsLogin
         }
-        throw GarminError.http(status2)
+        if [401, 403].contains(status) {
+            session.needsLogin = true
+            throw GarminError.needsLogin
+        }
+        let body = String(data: data, encoding: .utf8) ?? ""
+        DebugLog.shared.add("connectapi \(status) body=\(body.prefix(80))")
+        throw GarminError.http(status)
     }
 
-    private func perform(host: String, path: String, token: String, diBackend: Bool) async throws -> (Int, Data) {
+    private func perform(host: String, path: String, token: String) async throws -> (Int, Data) {
         guard let url = URL(string: "https://\(host)" + path) else { throw GarminError.badResponse }
         var req = URLRequest(url: url)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        if diBackend {
-            req.setValue("connectapi.garmin.com", forHTTPHeaderField: "DI-Backend")
-        }
-        req.setValue("NT", forHTTPHeaderField: "NK")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
-        req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-                     forHTTPHeaderField: "User-Agent")
+        // Garmin Connect Mobile UA — connectapi expects a mobile client,
+        // not a browser; a Safari UA is what triggers the 401 wall.
+        req.setValue("GCM-iOS-5.7.2.1", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse else { throw GarminError.badResponse }
         return (http.statusCode, data)
