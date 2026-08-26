@@ -7,7 +7,7 @@ import SwiftData
 enum BiomarkerSeeder {
     @MainActor
     static func seedIfNeeded(context: ModelContext) -> Bool {
-        if UserDefaults.standard.bool(forKey: "biomarkerSeedV1") { return false }
+        if UserDefaults.standard.bool(forKey: "biomarkerSeedV2") { return false }
         guard let url = Bundle.main.url(forResource: "BiomarkerSeed", withExtension: "csv"),
               let text = try? String(contentsOf: url, encoding: .utf8) else {
             DebugLog.shared.add("seed: BiomarkerSeed.csv missing")
@@ -40,7 +40,7 @@ enum BiomarkerSeeder {
             }
         }
         try? context.save()
-        UserDefaults.standard.set(true, forKey: "biomarkerSeedV1")
+        UserDefaults.standard.set(true, forKey: "biomarkerSeedV2")
         DebugLog.shared.add("seed: biomarkers rows=\(records.count - 1)")
         return true
     }

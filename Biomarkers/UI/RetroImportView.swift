@@ -99,7 +99,12 @@ struct RetroImportView: View {
         var record: [String] = []
         var field = ""
         var inQuotes = false
-        let chars = Array(text)
+        // Swift treats "\r\n" as a single Character, so normalize line endings
+        // to "\n" first — otherwise CRLF files (Sheets/Excel exports) collapse
+        // into one record.
+        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
+                             .replacingOccurrences(of: "\r", with: "\n")
+        let chars = Array(normalized)
         var i = 0
         while i < chars.count {
             let c = chars[i]
