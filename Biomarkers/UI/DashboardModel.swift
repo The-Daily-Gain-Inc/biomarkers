@@ -47,7 +47,7 @@ final class DashboardModel: ObservableObject {
         "readiness": true, "resilience": true, "o_hrv": true, "o_stress": false, "o_activity": true, "spo2": true,
         "years": true, "sleep_score": true, "sleep_hours": true,
         "rp_bodyfat": false, "rp_weight": false,
-        "glucose": false, "bp_sys": false, "bp_dia": false, "ear": true,
+        "glucose": false, "bp_sys": false, "bp_dia": false, "ear": false,
         "porn": false, "reading": true, "meditation": true,
     ]
 
@@ -75,10 +75,10 @@ final class DashboardModel: ObservableObject {
     }
 
     static let builtinManualMetrics: [(key: String, label: String, unit: String?)] = [
-        ("glucose", "Glucose", "mg/dL"),
+        ("glucose", "Glucose", "mmol/L"),
         ("bp_sys", "BP Systolic", "mmHg"),
         ("bp_dia", "BP Diastolic", "mmHg"),
-        ("ear", "Ear Health", "/10"),
+        ("ear", "Ear Age", "yrs"),
         ("porn", "Porn", "/wk"),
         ("reading", "Reading", nil),
         ("meditation", "Meditation", nil),
@@ -146,11 +146,11 @@ final class DashboardModel: ObservableObject {
         "rp_bodyfat":  .init(agg: .latest, format: { String(format: "%.1f", $0) }),
         "rp_weight":   .init(agg: .latest, format: { String(format: "%.1f", $0) }),
         // Manual metrics — latest reading is the headline.
-        "glucose":     .init(agg: .latest, format: { String(Int($0.rounded())) }),
+        "glucose":     .init(agg: .latest, format: { String(format: "%.1f", $0) }),
         "bp_sys":      .init(agg: .latest, format: { String(Int($0.rounded())) }),
         "bp_dia":      .init(agg: .latest, format: { String(Int($0.rounded())) }),
         "ear":         .init(agg: .latest, format: { String(Int($0.rounded())) }),
-        "porn":        .init(agg: .latest, format: { String(Int($0.rounded())) }),
+        "porn":        .init(agg: .latest, format: { String(format: "%.1f", $0) }),
         "reading":     .init(agg: .latest, format: { String(Int($0.rounded())) }),
         "meditation":  .init(agg: .latest, format: { String(Int($0.rounded())) }),
     ]

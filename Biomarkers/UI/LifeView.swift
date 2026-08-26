@@ -4,7 +4,7 @@ import SwiftData
 /// Life-planning hub: Dreams (+ read-only profile), editable Longevity rules,
 /// and the Retro matrix — all backed by SwiftData and seeded on first launch.
 struct LifeView: View {
-    enum Tab: String, CaseIterable { case dreams = "Dreams", longevity = "Longevity", retro = "Retro" }
+    enum Tab: String, CaseIterable { case dreams = "Dreams", longevity = "Longevity", workout = "Workout", retro = "Retro" }
 
     @Environment(\.modelContext) private var context
     @EnvironmentObject private var cloud: CloudSync
@@ -25,6 +25,7 @@ struct LifeView: View {
                 switch tab {
                 case .dreams: DreamsSection()
                 case .longevity: LongevitySection()
+                case .workout: WorkoutSection()
                 case .retro: RetroMatrix()
                 }
             }
@@ -65,6 +66,14 @@ struct LifeView: View {
         let ruleCount = (try? context.fetchCount(FetchDescriptor<LongevityRule>())) ?? 0
         if ruleCount == 0 {
             for (i, r) in RetroSeed.longevityRules.enumerated() { context.insert(LongevityRule(text: r, order: i)) }
+        }
+        // One-time: seed the bundled workout blocks, then they sync to cloud.
+        let workoutCount = (try? context.fetchCount(FetchDescriptor<WorkoutBlock>())) ?? 0
+        if workoutCount == 0 && !UserDefaults.standard.bool(forKey: "workoutSeedV1") {
+            for (i, b) in WorkoutSeed.blocks.enumerated() {
+                context.insert(WorkoutBlock(title: b.0, content: b.1, order: i))
+            }
+            UserDefaults.standard.set(true, forKey: "workoutSeedV1")
         }
         try? context.save()
     }

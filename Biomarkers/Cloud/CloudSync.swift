@@ -185,6 +185,9 @@ final class CloudSync: ObservableObject {
             try await push(root.collection("longevityRules"),
                            (try? context.fetch(FetchDescriptor<LongevityRule>())) ?? [],
                            id: { $0.id }, data: { ["text": $0.text, "order": $0.order] })
+            try await push(root.collection("workoutBlocks"),
+                           (try? context.fetch(FetchDescriptor<WorkoutBlock>())) ?? [],
+                           id: { $0.id }, data: { ["title": $0.title, "content": $0.content, "order": $0.order] })
 
             let ud = UserDefaults.standard
             try await root.collection("meta").document("profile").setData([
@@ -285,6 +288,13 @@ final class CloudSync: ObservableObject {
             guard let text = d["text"] as? String else { continue }
             if let x = rules[doc.documentID] { x.text = text }
             else { context.insert(LongevityRule(id: doc.documentID, text: text, order: d["order"] as? Int ?? 0)) }
+        }
+        let workouts = Dictionary((try? context.fetch(FetchDescriptor<WorkoutBlock>()))?.map { ($0.id, $0) } ?? [], uniquingKeysWith: { a, _ in a })
+        for doc in try await root.collection("workoutBlocks").getDocuments().documents {
+            let d = doc.data()
+            guard let title = d["title"] as? String else { continue }
+            if let x = workouts[doc.documentID] { x.title = title; x.content = d["content"] as? String ?? x.content }
+            else { context.insert(WorkoutBlock(id: doc.documentID, title: title, content: d["content"] as? String ?? "", order: d["order"] as? Int ?? 0)) }
         }
     }
 }

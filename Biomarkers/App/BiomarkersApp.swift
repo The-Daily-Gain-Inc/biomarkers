@@ -28,6 +28,7 @@ struct BiomarkersApp: App {
         .modelContainer(for: [
             CachedActivity.self, DailyMetric.self,
             RetroRow.self, RetroColumn.self, RetroCell.self, RetroDream.self, LongevityRule.self,
+            WorkoutBlock.self,
         ])
     }
 }

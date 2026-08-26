@@ -61,6 +61,21 @@ final class RetroDream {
     }
 }
 
+/// An editable workout block (e.g. Gym Day, Calisthenics, Skills).
+@Model
+final class WorkoutBlock {
+    @Attribute(.unique) var id: String
+    var title: String
+    var content: String
+    var order: Int
+    init(id: String = UUID().uuidString, title: String, content: String, order: Int) {
+        self.id = id
+        self.title = title
+        self.content = content
+        self.order = order
+    }
+}
+
 /// An editable longevity rule.
 @Model
 final class LongevityRule {
@@ -89,4 +104,7 @@ enum RetroSeed {
 
     static let dreams: [(String, String, String)] = []
     static let longevityRules: [String] = []
+
+    /// Neutral empty workout — the user's real blocks come from the cloud/seed.
+    static let workoutBlocks: [(String, String)] = []
 }
