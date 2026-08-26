@@ -12,21 +12,26 @@ struct WorkoutSection: View {
     var body: some View {
         List {
             ForEach(blocks) { block in
-                Button { editing = block } label: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(block.title).font(.headline).foregroundStyle(.primary)
-                        Text(block.content)
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(6)
+                Section {
+                    Text(block.content.isEmpty ? "Tap Edit to add details" : block.content)
+                        .font(.callout)
+                        .foregroundStyle(block.content.isEmpty ? .tertiary : .primary)
+                        .textSelection(.enabled)
+                } header: {
+                    HStack {
+                        Text(block.title).font(.headline).textCase(nil)
+                        Spacer()
+                        Button("Edit") { editing = block }.font(.caption)
                     }
                 }
             }
             .onDelete { idx in idx.map { blocks[$0] }.forEach(context.delete); save() }
-            Button {
-                let b = WorkoutBlock(title: "New Block", content: "", order: (blocks.last?.order ?? -1) + 1)
-                context.insert(b); save(); editing = b
-            } label: { Label("Add Block", systemImage: "plus") }
+            Section {
+                Button {
+                    let b = WorkoutBlock(title: "New Block", content: "", order: (blocks.last?.order ?? -1) + 1)
+                    context.insert(b); save(); editing = b
+                } label: { Label("Add Block", systemImage: "plus") }
+            }
         }
         .sheet(item: $editing) { block in
             NavigationStack {

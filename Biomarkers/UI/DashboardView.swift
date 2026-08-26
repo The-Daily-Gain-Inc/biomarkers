@@ -76,6 +76,9 @@ struct DashboardView: View {
             .onChange(of: ouraSession.token) { _, token in
                 if token != nil { Task { await reload() } }
             }
+            .onChange(of: cloud.bootstrapDone) { _, done in
+                if done { Task { await reload() } }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { showLog = true } label: { Label("Log", systemImage: "square.and.pencil") }

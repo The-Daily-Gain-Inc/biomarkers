@@ -7,9 +7,12 @@ import SwiftData
 enum BiomarkerSeeder {
     @MainActor
     static func seedIfNeeded(context: ModelContext) -> Bool {
-        guard !UserDefaults.standard.bool(forKey: "biomarkerSeedV1"),
-              let url = Bundle.main.url(forResource: "BiomarkerSeed", withExtension: "csv"),
-              let text = try? String(contentsOf: url, encoding: .utf8) else { return false }
+        if UserDefaults.standard.bool(forKey: "biomarkerSeedV1") { return false }
+        guard let url = Bundle.main.url(forResource: "BiomarkerSeed", withExtension: "csv"),
+              let text = try? String(contentsOf: url, encoding: .utf8) else {
+            DebugLog.shared.add("seed: BiomarkerSeed.csv missing")
+            return false
+        }
         let records = RetroImportView.parseDelimited(text, delimiter: ",")
         guard records.count >= 2 else { return false }
         let header = records[0].map { $0.trimmingCharacters(in: .whitespaces) }
@@ -38,6 +41,7 @@ enum BiomarkerSeeder {
         }
         try? context.save()
         UserDefaults.standard.set(true, forKey: "biomarkerSeedV1")
+        DebugLog.shared.add("seed: biomarkers rows=\(records.count - 1)")
         return true
     }
 }

@@ -17,6 +17,8 @@ final class CloudSync: ObservableObject {
     /// True once the launch restore has finished (or been attempted), so local
     /// seeding won't run over data that's still arriving from the cloud.
     @Published var didRestore = false
+    /// True after the launch bootstrap seeds — signals views to refresh.
+    @Published var bootstrapDone = false
     @Published var lastBackup: Date?
     @Published var lastError: String?
 

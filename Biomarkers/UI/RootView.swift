@@ -46,11 +46,11 @@ struct RootView: View {
             }
         }
         .task {
-            // Merge any cloud data into the local store, one-time seed the
-            // bundled biomarker history, then back up.
+            // Merge cloud data, seed bundled history (self-healing), then back up.
             await cloud.signIn()
             await cloud.restore(context: context)
-            _ = BiomarkerSeeder.seedIfNeeded(context: context)
+            Bootstrap.run(context: context)
+            cloud.bootstrapDone = true
             await cloud.backup(context: context)
         }
     }
