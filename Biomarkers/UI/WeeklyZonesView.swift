@@ -38,6 +38,22 @@ struct WeeklyZonesView: View {
         last7Days.map { ($0, sleepMinutes(for: $0)) }
     }
 
+    private func latestSleepDay() -> Date? {
+        sleepMetrics.filter { SleepPalette.keys.contains($0.metricKey) }.map(\.day).max()
+    }
+
+    /// The sleep to show for the selected day. Sleep is dated to the morning
+    /// you woke, so "today" is last night. If the selected day has no sleep
+    /// (e.g. today's not synced yet), fall back to the most recent night.
+    private var displayedSleep: (day: Date, minutes: [Double]) {
+        let m = sleepMinutes(for: selectedDay)
+        if m.reduce(0, +) > 0 { return (selectedDay, m) }
+        if Calendar.current.isDateInToday(selectedDay), let latest = latestSleepDay() {
+            return (latest, sleepMinutes(for: latest))
+        }
+        return (selectedDay, m)
+    }
+
 
     private var calendar: Calendar {
         var cal = Calendar(identifier: .iso8601)
@@ -90,10 +106,19 @@ struct WeeklyZonesView: View {
                     } else {
                         Text("No workout that day").font(.footnote).foregroundStyle(.secondary)
                     }
-                    Text("Sleep Stages").font(.caption).foregroundStyle(.secondary)
-                        .listRowSeparator(.hidden)
-                    if sleepMinutes(for: selectedDay).reduce(0, +) > 0 {
-                        sleepBarChart(sleepMinutes(for: selectedDay)).listRowSeparator(.hidden)
+                    HStack {
+                        Text("Sleep Stages").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        if displayedSleep.minutes.reduce(0, +) > 0 {
+                            Text(Calendar.current.isDateInToday(selectedDay)
+                                 ? "night of \(displayedSleep.day.formatted(.dateTime.month(.abbreviated).day()))"
+                                 : "")
+                                .font(.caption2).foregroundStyle(.tertiary)
+                        }
+                    }
+                    .listRowSeparator(.hidden)
+                    if displayedSleep.minutes.reduce(0, +) > 0 {
+                        sleepBarChart(displayedSleep.minutes).listRowSeparator(.hidden)
                         sleepLegend.listRowSeparator(.hidden)
                     } else {
                         Text("No sleep data that night").font(.footnote).foregroundStyle(.secondary)

@@ -184,7 +184,16 @@ final class DashboardModel: ObservableObject {
         }
     }
 
-    func load(context: ModelContext, garmin: SessionStore, oura: OuraSession, renpho: RenphoSession) async {
+    /// Freshness gate — most data is cached and rarely changes, so tab
+    /// switches render from cache and only hit the network when stale or forced.
+    static func isStale(_ interval: TimeInterval = 900) -> Bool {
+        Date().timeIntervalSince1970 - UserDefaults.standard.double(forKey: "lastNetworkSync") > interval
+    }
+    static func markSynced() {
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "lastNetworkSync")
+    }
+
+    func load(context: ModelContext, garmin: SessionStore, oura: OuraSession, renpho: RenphoSession, cacheOnly: Bool = false) async {
         guard !isLoading else { return }
         isLoading = true
         defer { isLoading = false }
@@ -197,6 +206,7 @@ final class DashboardModel: ObservableObject {
         loadIndex(context)
         // 1. Instant render from cache.
         renderFromCache(context: context, days: days)
+        if cacheOnly { return }
 
         // 2. Refresh from network into the cache, then re-render.
         async let g: Void = loadGarmin(context: context, garmin: garmin, days: days)
@@ -204,6 +214,7 @@ final class DashboardModel: ObservableObject {
         async let r: Void = loadRenpho(context: context, renpho: renpho)
         _ = await (g, o, r)
         try? context.save()
+        Self.markSynced()
 
         renderFromCache(context: context, days: days)
     }
@@ -211,7 +222,10 @@ final class DashboardModel: ObservableObject {
     /// Fetches and caches daily metrics over a wider window (for the Trends
     /// matrix). Reuses the same per-day cache, so it only downloads days not
     /// already stored.
-    func loadHistory(context: ModelContext, garmin: SessionStore, oura: OuraSession, renpho: RenphoSession, weeks: Int) async {
+    func loadHistory(context: ModelContext, garmin: SessionStore, oura: OuraSession, renpho: RenphoSession, weeks: Int, cacheOnly: Bool = false) async {
+        // Trends renders from the SwiftData cache already; only fetch when
+        // stale or forced (e.g. Load-more / pull-to-refresh).
+        if cacheOnly { return }
         guard !isLoadingHistory else { return }
         isLoadingHistory = true
         defer { isLoadingHistory = false }
@@ -228,6 +242,7 @@ final class DashboardModel: ObservableObject {
         async let r: Void = loadRenpho(context: context, renpho: renpho)
         _ = await (g, o, r)
         try? context.save()
+        Self.markSynced()
     }
 
     // MARK: - Cache read

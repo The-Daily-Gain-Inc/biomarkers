@@ -72,9 +72,9 @@ struct TrendsView: View {
             .sheet(isPresented: $showVisibility) {
                 MetricVisibilityEditor(hiddenCSV: $trendsHiddenCSV)
             }
-            .task { await loadHistory() }
-            .onChange(of: weeksOfHistory) { _, _ in Task { await loadHistory() } }
-            .refreshable { await loadHistory() }
+            .task { await loadHistory(force: false) }
+            .onChange(of: weeksOfHistory) { _, _ in Task { await loadHistory(force: true) } }
+            .refreshable { await loadHistory(force: true) }
             .overlay(alignment: .top) {
                 if model.isLoadingHistory {
                     ProgressView().padding(.top, 6)
@@ -121,9 +121,10 @@ struct TrendsView: View {
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
     }
 
-    private func loadHistory() async {
+    private func loadHistory(force: Bool) async {
+        let cacheOnly = !force && !DashboardModel.isStale()
         await model.loadHistory(context: context, garmin: session, oura: ouraSession,
-                                renpho: renphoSession, weeks: weeksOfHistory)
+                                renpho: renphoSession, weeks: weeksOfHistory, cacheOnly: cacheOnly)
     }
 
     /// Trailing column that loads another block of older weeks on demand

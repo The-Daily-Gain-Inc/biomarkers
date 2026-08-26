@@ -68,16 +68,16 @@ struct DashboardView: View {
             .background(Color(.systemGroupedBackground))
             .navigationTitle(Text("Biomarkers"))
             .sheet(isPresented: $showGarminLogin) { GarminLoginSheet() }
-            .refreshable { await reload() }
+            .refreshable { await reload(force: true) }
             .task { await reload() }
             .onChange(of: session.token) { _, token in
-                if token != nil { Task { await reload() } }
+                if token != nil { Task { await reload(force: true) } }
             }
             .onChange(of: ouraSession.token) { _, token in
-                if token != nil { Task { await reload() } }
+                if token != nil { Task { await reload(force: true) } }
             }
             .onChange(of: cloud.bootstrapDone) { _, done in
-                if done { Task { await reload() } }
+                if done { Task { await reload(force: true) } }
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -128,12 +128,13 @@ struct DashboardView: View {
         .padding(.horizontal)
     }
 
-    private func reload() async {
-        if session.isLoggedIn {
+    private func reload(force: Bool = false) async {
+        let cacheOnly = !force && !DashboardModel.isStale()
+        if !cacheOnly && session.isLoggedIn {
             await sync.sync(context: context, session: session, backfillMonths: backfillMonths)
         }
-        await model.load(context: context, garmin: session, oura: ouraSession, renpho: renphoSession)
-        cloud.requestBackup(context: context)
+        await model.load(context: context, garmin: session, oura: ouraSession, renpho: renphoSession, cacheOnly: cacheOnly)
+        if !cacheOnly { cloud.requestBackup(context: context) }
     }
 }
 
