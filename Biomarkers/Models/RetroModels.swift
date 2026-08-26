@@ -21,10 +21,13 @@ final class RetroRow {
     @Attribute(.unique) var id: String
     var name: String
     var order: Int
-    init(id: String = UUID().uuidString, name: String, order: Int) {
+    /// Excluded sections are hidden from the guided review (still browsable).
+    var excluded: Bool = false
+    init(id: String = UUID().uuidString, name: String, order: Int, excluded: Bool = false) {
         self.id = id
         self.name = name
         self.order = order
+        self.excluded = excluded
     }
 }
 

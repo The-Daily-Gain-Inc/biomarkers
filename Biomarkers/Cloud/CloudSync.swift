@@ -194,7 +194,7 @@ final class CloudSync: ObservableObject {
             })
             try await push(root.collection("retroRows"),
                            (try? context.fetch(FetchDescriptor<RetroRow>())) ?? [],
-                           id: { $0.id }, data: { ["name": $0.name, "order": $0.order] })
+                           id: { $0.id }, data: { ["name": $0.name, "order": $0.order, "excluded": $0.excluded] })
             try await push(root.collection("retroColumns"),
                            (try? context.fetch(FetchDescriptor<RetroColumn>())) ?? [],
                            id: { $0.id }, data: { ["label": $0.label, "order": $0.order] })
@@ -280,8 +280,9 @@ final class CloudSync: ObservableObject {
         for doc in try await root.collection("retroRows").getDocuments().documents {
             let d = doc.data()
             guard let name = d["name"] as? String, let order = d["order"] as? Int else { continue }
-            if let r = rows[doc.documentID] { r.name = name; r.order = order }
-            else { context.insert(RetroRow(id: doc.documentID, name: name, order: order)) }
+            let excluded = d["excluded"] as? Bool ?? false
+            if let r = rows[doc.documentID] { r.name = name; r.order = order; r.excluded = excluded }
+            else { context.insert(RetroRow(id: doc.documentID, name: name, order: order, excluded: excluded)) }
         }
         let cols = Dictionary((try? context.fetch(FetchDescriptor<RetroColumn>()))?.map { ($0.id, $0) } ?? [], uniquingKeysWith: { a, _ in a })
         for doc in try await root.collection("retroColumns").getDocuments().documents {

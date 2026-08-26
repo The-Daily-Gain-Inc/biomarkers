@@ -18,16 +18,17 @@ struct RetroReview: View {
     @State private var newSection = ""
 
     private var column: RetroColumn? { columns.first { $0.id == columnId } }
+    private var reviewRows: [RetroRow] { rows.filter { !$0.excluded } }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if rows.isEmpty {
+                if reviewRows.isEmpty {
                     ContentUnavailableView("No sections yet", systemImage: "square.stack",
                                            description: Text("Add a section to start your review."))
                 } else {
                     TabView(selection: $index) {
-                        ForEach(Array(rows.enumerated()), id: \.offset) { i, row in
+                        ForEach(Array(reviewRows.enumerated()), id: \.offset) { i, row in
                             page(row: row).tag(i)
                         }
                     }
@@ -56,7 +57,7 @@ struct RetroReview: View {
     @ViewBuilder
     private func page(row: RetroRow) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("\(index + 1) of \(rows.count)")
+            Text("\(index + 1) of \(reviewRows.count)")
                 .font(.caption).foregroundStyle(.secondary)
             Text(row.name).font(.title2.weight(.semibold))
             TextEditor(text: binding(for: row))
@@ -75,7 +76,7 @@ struct RetroReview: View {
             } label: { Label("Previous", systemImage: "chevron.left") }
                 .disabled(index == 0)
             Spacer()
-            if index < rows.count - 1 {
+            if index < reviewRows.count - 1 {
                 Button {
                     save(); withAnimation { index += 1 }
                 } label: { Label("Next", systemImage: "chevron.right").labelStyle(.titleAndIcon) }
@@ -112,7 +113,7 @@ struct RetroReview: View {
         context.insert(RetroRow(name: name, order: (rows.last?.order ?? -1) + 1))
         try? context.save()
         // Jump to the new (last) section.
-        DispatchQueue.main.async { index = rows.count - 1 }
+        DispatchQueue.main.async { index = reviewRows.count - 1 }
     }
 
     private func save() {

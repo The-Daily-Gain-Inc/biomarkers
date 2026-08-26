@@ -26,12 +26,14 @@ struct RetroMatrix: View {
         return map
     }
 
+    enum Mode: String, CaseIterable { case byDate = "By Date", bySection = "By Section" }
+    @State private var mode: Mode = .byDate
+
     var body: some View {
         List {
             Section {
                 Button { startTodayReview() } label: {
-                    Label("Start a Review", systemImage: "square.and.pencil")
-                        .font(.headline)
+                    Label("Start a Review", systemImage: "square.and.pencil").font(.headline)
                 }
                 if !columns.isEmpty {
                     Menu {
@@ -41,35 +43,59 @@ struct RetroMatrix: View {
                     } label: {
                         Label("Review a specific period", systemImage: "calendar")
                     }
-                    NavigationLink {
-                        RetroDatesList()
-                    } label: {
-                        Label("Browse by date", systemImage: "calendar.day.timeline.left")
-                    }
-                }
-            } footer: {
-                Text("Step through each section one at a time with Next / Previous.")
-            }
-            Section("Sections") {
-            ForEach(rows) { row in
-                NavigationLink {
-                    RetroDomainDetail(row: row, columns: columns)
-                } label: {
-                    let filled = cellsByRow[row.id]?.count ?? 0
-                    let latest = latestEntry(for: row)
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack {
-                            Text(row.name).font(.headline)
-                            Spacer()
-                            Text("\(filled)").font(.caption).foregroundStyle(.secondary)
-                        }
-                        if let latest {
-                            Text(latest).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                        }
-                    }
                 }
             }
-            .onDelete { idx in idx.map { rows[$0] }.forEach(context.delete); try? context.save() }
+
+            Picker("View", selection: $mode) {
+                ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .listRowSeparator(.hidden)
+
+            if mode == .byDate {
+                Section("Dates") {
+                    ForEach(columns.reversed()) { col in
+                        NavigationLink { RetroDateView(columnId: col.id) } label: { Text(col.label) }
+                    }
+                }
+            } else {
+                Section {
+                    ForEach(rows) { row in
+                        NavigationLink {
+                            RetroDomainDetail(row: row, columns: columns)
+                        } label: {
+                            let filled = cellsByRow[row.id]?.count ?? 0
+                            let latest = latestEntry(for: row)
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack {
+                                    Text(row.name).font(.headline)
+                                        .foregroundStyle(row.excluded ? .secondary : .primary)
+                                    if row.excluded {
+                                        Image(systemName: "eye.slash").font(.caption2).foregroundStyle(.tertiary)
+                                    }
+                                    Spacer()
+                                    Text("\(filled)").font(.caption).foregroundStyle(.secondary)
+                                }
+                                if let latest {
+                                    Text(latest).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                }
+                            }
+                        }
+                        .contextMenu {
+                            Button {
+                                row.excluded.toggle(); try? context.save(); cloud.requestBackup(context: context)
+                            } label: {
+                                Label(row.excluded ? "Include in reviews" : "Exclude from reviews",
+                                      systemImage: row.excluded ? "eye" : "eye.slash")
+                            }
+                        }
+                    }
+                    .onDelete { idx in idx.map { rows[$0] }.forEach(context.delete); try? context.save() }
+                } header: {
+                    Text("Sections")
+                } footer: {
+                    Text("Long-press a section to exclude it from reviews.")
+                }
             }
         }
         .navigationTitle(Text("Retro"))
