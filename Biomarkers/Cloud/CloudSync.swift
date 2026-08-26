@@ -1,5 +1,7 @@
 import Foundation
 import SwiftData
+import CryptoKit
+import AuthenticationServices
 import FirebaseAuth
 import FirebaseFirestore
 
@@ -11,10 +13,12 @@ import FirebaseFirestore
 final class CloudSync: ObservableObject {
     @Published var isSignedIn = false
     @Published var isSyncing = false
+    @Published var isAnonymous = true
     @Published var lastBackup: Date?
     @Published var lastError: String?
 
     private var uid: String?
+    private var currentNonce: String?
     private var db: Firestore { Firestore.firestore() }
 
     init() {
@@ -26,15 +30,88 @@ final class CloudSync: ObservableObject {
     /// Signs in anonymously (stable per install) so data is scoped to the user.
     func signIn() async {
         if let user = Auth.auth().currentUser {
-            uid = user.uid; isSignedIn = true; return
+            uid = user.uid; isSignedIn = true; isAnonymous = user.isAnonymous; return
         }
         do {
             let result = try await Auth.auth().signInAnonymously()
             uid = result.user.uid
             isSignedIn = true
+            isAnonymous = true
         } catch {
             lastError = "Cloud sign-in failed: \(error.localizedDescription)"
         }
+    }
+
+    // MARK: - Sign in with Apple
+
+    /// Configure the Apple ID request with a fresh nonce.
+    func prepareAppleRequest(_ request: ASAuthorizationAppleIDRequest) {
+        let nonce = Self.randomNonce()
+        currentNonce = nonce
+        request.requestedScopes = [.fullName, .email]
+        request.nonce = Self.sha256(nonce)
+    }
+
+    /// Complete Apple sign-in: link to the anonymous user (keeping the same
+    /// uid + data) when possible, otherwise sign in to the existing account.
+    func completeAppleSignIn(_ result: Result<ASAuthorization, Error>, context: ModelContext) async {
+        switch result {
+        case .failure(let error):
+            lastError = "Apple sign-in cancelled: \(error.localizedDescription)"
+        case .success(let auth):
+            guard let credential = auth.credential as? ASAuthorizationAppleIDCredential,
+                  let nonce = currentNonce,
+                  let tokenData = credential.identityToken,
+                  let idToken = String(data: tokenData, encoding: .utf8) else {
+                lastError = "Apple sign-in: missing token."
+                return
+            }
+            let firebaseCredential = OAuthProvider.appleCredential(
+                withIDToken: idToken, rawNonce: nonce, fullName: credential.fullName)
+            do {
+                if let user = Auth.auth().currentUser, user.isAnonymous {
+                    let linked = try await user.link(with: firebaseCredential)
+                    uid = linked.user.uid
+                } else {
+                    let signedIn = try await Auth.auth().signIn(with: firebaseCredential)
+                    uid = signedIn.user.uid
+                }
+                isSignedIn = true
+                isAnonymous = Auth.auth().currentUser?.isAnonymous ?? false
+                lastError = nil
+                await restore(context: context)
+                await backup(context: context)
+            } catch let error as NSError where error.code == AuthErrorCode.credentialAlreadyInUse.rawValue {
+                // This Apple ID already has an account — sign into it.
+                if let updated = error.userInfo[AuthErrorUserInfoUpdatedCredentialKey] as? AuthCredential,
+                   let signedIn = try? await Auth.auth().signIn(with: updated) {
+                    uid = signedIn.user.uid
+                    isSignedIn = true
+                    isAnonymous = false
+                    await restore(context: context)
+                } else {
+                    lastError = "This Apple ID is already linked to another account."
+                }
+            } catch {
+                lastError = "Apple sign-in failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private static func randomNonce(length: Int = 32) -> String {
+        let charset = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._")
+        var result = "", remaining = length
+        while remaining > 0 {
+            var byte: UInt8 = 0
+            if SecRandomCopyBytes(kSecRandomDefault, 1, &byte) == errSecSuccess {
+                result.append(charset[Int(byte) % charset.count]); remaining -= 1
+            }
+        }
+        return result
+    }
+
+    private static func sha256(_ input: String) -> String {
+        SHA256.hash(data: Data(input.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     private func userDoc() -> DocumentReference? {

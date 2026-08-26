@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import AuthenticationServices
 
 struct SettingsView: View {
     @EnvironmentObject var session: SessionStore
@@ -42,13 +43,26 @@ struct SettingsView: View {
                         Task { await cloud.restore(context: context) }
                     }
                     .disabled(cloud.isSyncing)
+                    if cloud.isAnonymous {
+                        SignInWithAppleButton(.signIn) { request in
+                            cloud.prepareAppleRequest(request)
+                        } onCompletion: { result in
+                            Task { await cloud.completeAppleSignIn(result, context: context) }
+                        }
+                        .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+                        .frame(height: 44)
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                    } else {
+                        Label("Signed in with Apple", systemImage: "applelogo")
+                            .foregroundStyle(.secondary)
+                    }
                     if let error = cloud.lastError {
                         Text(error).font(.caption).foregroundStyle(.red)
                     }
                 } header: {
                     Text("Cloud Backup")
                 } footer: {
-                    Text("Everything (metrics, activities, retro, dreams, rules) is mirrored to Firestore and restored on a fresh install.")
+                    Text("Everything is mirrored to Firestore and restored on a fresh install. Sign in with Apple to keep the same account across devices.")
                 }
 
                 Section {

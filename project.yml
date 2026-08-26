@@ -18,6 +18,11 @@ targets:
         product: FirebaseFirestore
       - package: Firebase
         product: FirebaseAuth
+    entitlements:
+      path: Biomarkers/Biomarkers.entitlements
+      properties:
+        com.apple.developer.applesignin:
+          - Default
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ca.thedailygain.biomarkers
