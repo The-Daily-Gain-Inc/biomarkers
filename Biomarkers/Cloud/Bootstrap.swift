@@ -29,22 +29,32 @@ enum Bootstrap {
         let rc = (try? context.fetchCount(FetchDescriptor<RetroCell>())) ?? 0
         let wb = (try? context.fetchCount(FetchDescriptor<WorkoutBlock>())) ?? 0
         DebugLog.shared.add("bootstrap: dailyMetrics=\(dm) retroCells=\(rc) workouts=\(wb)")
+        for key in ["reading", "glucose", "bp_sys", "ear", "porn", "meditation"] {
+            let predicate = #Predicate<DailyMetric> { $0.metricKey == key }
+            let c = (try? context.fetchCount(FetchDescriptor(predicate: predicate))) ?? 0
+            DebugLog.shared.add("manual \(key)=\(c)")
+        }
     }
 
     /// Wipes and reseeds the retro matrix from the bundled CSV.
     @MainActor
     static func importRetroCSV(_ context: ModelContext) -> Bool {
-        guard let url = Bundle.main.url(forResource: "RetroSeed", withExtension: "csv"),
-              let text = try? String(contentsOf: url, encoding: .utf8) else {
-            DebugLog.shared.add("seed: RetroSeed.csv missing")
-            return false
+        guard let url = Bundle.main.url(forResource: "RetroSeed", withExtension: "csv") else {
+            DebugLog.shared.add("retro: RetroSeed.csv NOT in bundle"); return false
+        }
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            DebugLog.shared.add("retro: could not read csv"); return false
         }
         let records = RetroImportView.parseDelimited(text, delimiter: ",")
-        guard records.count >= 2, let header = records.first else { return false }
+        DebugLog.shared.add("retro: csv chars=\(text.count) records=\(records.count)")
+        guard records.count >= 2, let header = records.first else {
+            DebugLog.shared.add("retro: too few records"); return false
+        }
 
         try? context.delete(model: RetroCell.self)
         try? context.delete(model: RetroRow.self)
         try? context.delete(model: RetroColumn.self)
+        try? context.save()
 
         var colByIndex: [Int: RetroColumn] = [:]
         for idx in 1..<header.count {
@@ -53,7 +63,7 @@ enum Bootstrap {
             let col = RetroColumn(label: label, order: idx - 1)
             context.insert(col); colByIndex[idx] = col
         }
-        var order = 0
+        var order = 0, cellCount = 0
         for record in records.dropFirst() {
             guard let name = record.first?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else { continue }
             let row = RetroRow(name: name, order: order); order += 1
@@ -63,9 +73,16 @@ enum Bootstrap {
                 let value = record[idx].trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !value.isEmpty, value != "-" else { continue }
                 context.insert(RetroCell(rowId: row.id, colId: col.id, text: value))
+                cellCount += 1
             }
         }
-        try? context.save()
+        do {
+            try context.save()
+            DebugLog.shared.add("retro: inserted rows=\(order) cells=\(cellCount)")
+        } catch {
+            DebugLog.shared.add("retro: SAVE ERROR \(error)")
+            return false
+        }
         return true
     }
 }
