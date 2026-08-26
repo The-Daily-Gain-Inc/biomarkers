@@ -31,11 +31,20 @@ final class DashboardModel: ObservableObject {
     /// Activity-derived tiles summed per week (not stored in DailyMetric).
     static let activityMetricIds: Set<String> = ["workout_cal", "gym", "load"]
 
+    /// Oura resilience levels, low→high, mapped to a 1…5 score for charting.
+    static let resilienceLevels = ["Limited", "Adequate", "Solid", "Strong", "Exceptional"]
+    static func resilienceLabel(_ v: Double) -> String {
+        resilienceLevels[min(max(Int(v.rounded()) - 1, 0), 4)]
+    }
+    static func resilienceScore(_ level: String) -> Double? {
+        resilienceLevels.firstIndex { $0.caseInsensitiveCompare(level) == .orderedSame }.map { Double($0 + 1) }
+    }
+
     /// Whether a higher value is the healthier direction (drives delta colors).
     static let higherIsBetter: [String: Bool] = [
         "workout_cal": true, "gym": true, "vo2": true, "fit_age": false,
         "load": true, "rhr": false, "steps": true,
-        "readiness": true, "o_hrv": true, "o_stress": false, "o_activity": true, "spo2": true,
+        "readiness": true, "resilience": true, "o_hrv": true, "o_stress": false, "o_activity": true, "spo2": true,
         "years": true, "sleep_score": true, "sleep_hours": true,
         "rp_bodyfat": false, "rp_weight": false,
         "glucose": false, "bp_sys": false, "bp_dia": false, "ear": true,
@@ -45,7 +54,7 @@ final class DashboardModel: ObservableObject {
     /// Accent color per metric (detail views, Today cells).
     static func tint(for id: String) -> Color {
         let map: [String: UInt32] = [
-            "readiness": 0x2FA36B, "sleep_score": 0x5B6CF0, "sleep_hours": 0x5B6CF0,
+            "readiness": 0x2FA36B, "resilience": 0x2FA36B, "sleep_score": 0x5B6CF0, "sleep_hours": 0x5B6CF0,
             "o_stress": 0xE0791F, "o_activity": 0x00A6A0, "steps": 0x2E8BE6,
             "o_hrv": 0x8A6BD6, "rhr": 0xD1477A, "vo2": 0x2FA36B, "spo2": 0x2E8BE6,
             "rp_weight": 0x00A6A0, "rp_bodyfat": 0xE0791F, "fit_age": 0x8A6BD6,
@@ -77,6 +86,7 @@ final class DashboardModel: ObservableObject {
         .init(id: "rhr", titleKey: "Resting HR", provider: .oura, unit: "bpm"),
         .init(id: "steps", titleKey: "Steps Avg", provider: .garmin),
         .init(id: "readiness", titleKey: "Readiness", provider: .oura),
+        .init(id: "resilience", titleKey: "Resilience", provider: .oura),
         .init(id: "o_hrv", titleKey: "HRV", provider: .oura, unit: "ms"),
         .init(id: "o_stress", titleKey: "Stress", provider: .oura, unit: "h high"),
         .init(id: "o_activity", titleKey: "Oura Activity", provider: .oura),
@@ -99,6 +109,7 @@ final class DashboardModel: ObservableObject {
         "rhr":         .init(agg: .avg,    format: { String(Int($0.rounded())) }),
         "vo2":         .init(agg: .latest, format: { String(format: "%.1f", $0) }),
         "readiness":   .init(agg: .avg,    format: { String(Int($0.rounded())) }),
+        "resilience":  .init(agg: .latest, format: { DashboardModel.resilienceLabel($0) }),
         "o_hrv":       .init(agg: .avg,    format: { String(Int($0.rounded())) }),
         "o_stress":    .init(agg: .avg,    format: { String(format: "%.1f", $0) }),
         "o_activity":  .init(agg: .avg,    format: { String(Int($0.rounded())) }),
@@ -314,6 +325,13 @@ final class DashboardModel: ObservableObject {
         }
         if let rows = try? await client.dailyCollection("daily_readiness", start: windowStart, end: end) {
             for r in rows { if let d = day(from: r), let s = (r["score"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "readiness", value: s) } }
+        }
+        if let rows = try? await client.dailyCollection("daily_resilience", start: windowStart, end: end) {
+            for r in rows {
+                if let d = day(from: r), let lvl = r["level"] as? String, let s = Self.resilienceScore(lvl) {
+                    upsert(context, day: d, key: "resilience", value: s)
+                }
+            }
         }
         if let rows = try? await client.dailyCollection("sleep", start: windowStart, end: end) {
             for r in rows where (r["type"] as? String) == "long_sleep" {
