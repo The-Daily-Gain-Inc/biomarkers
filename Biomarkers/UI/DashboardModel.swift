@@ -262,6 +262,20 @@ final class DashboardModel: ObservableObject {
         return GarminClient.dayFormatter.date(from: s)
     }
 
+    /// Local calendar day of `bedtime_end` (when the sleep session ended) —
+    /// the morning date the night's metrics belong to.
+    private func wakeDay(from row: [String: Any]) -> Date? {
+        guard let s = row["bedtime_end"] as? String else { return nil }
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        var date = f.date(from: s)
+        if date == nil {
+            f.formatOptions = [.withInternetDateTime]
+            date = f.date(from: s)
+        }
+        return date.map { Calendar.current.startOfDay(for: $0) }
+    }
+
     private func loadOura(context: ModelContext, oura: OuraSession, windowStart: Date, todayStart: Date) async {
         guard oura.isConnected else { return }
         let client = OuraClient(session: oura)
@@ -277,7 +291,9 @@ final class DashboardModel: ObservableObject {
         }
         if let rows = try? await client.dailyCollection("sleep", start: windowStart, end: end) {
             for r in rows where (r["type"] as? String) == "long_sleep" {
-                guard let d = day(from: r) else { continue }
+                // Date by the morning you woke (bedtime_end), so HRV/RHR/sleep
+                // align with sleep_score/readiness instead of lagging a day.
+                guard let d = wakeDay(from: r) ?? day(from: r) else { continue }
                 if let v = (r["average_hrv"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "o_hrv", value: v) }
                 if let v = (r["total_sleep_duration"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "sleep_hours", value: v / 3600) }
                 if let v = (r["lowest_heart_rate"] as? NSNumber)?.doubleValue, v > 0 { upsert(context, day: d, key: "rhr", value: v) }
