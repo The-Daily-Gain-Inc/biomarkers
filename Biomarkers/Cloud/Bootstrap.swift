@@ -5,11 +5,22 @@ import SwiftData
 /// cloud restore). Self-healing: re-imports whenever a store is empty, so
 /// missing data comes back rather than staying blank behind a stale flag.
 enum Bootstrap {
+    /// Returns true if it force-reimported retro (so the caller can also
+    /// clean the cloud copy, which merge-writes never delete on their own).
     @MainActor
-    static func run(context: ModelContext) {
-        // Retro — import the bundled CSV whenever there are no cells.
+    @discardableResult
+    static func run(context: ModelContext) -> Bool {
+        // Retro — force a clean wipe+reimport once (retroReimportV5), then
+        // self-heal whenever there are no cells.
+        var forcedRetro = false
         let cellCount = (try? context.fetchCount(FetchDescriptor<RetroCell>())) ?? 0
-        if cellCount == 0, importRetroCSV(context) {
+        if !UserDefaults.standard.bool(forKey: "retroReimportV5") {
+            if importRetroCSV(context) {
+                UserDefaults.standard.set(true, forKey: "retroReimportV5")
+                forcedRetro = true
+                DebugLog.shared.add("seed: retro force-reimported")
+            }
+        } else if cellCount == 0, importRetroCSV(context) {
             DebugLog.shared.add("seed: retro imported")
         }
         // Manual biomarkers (flag-guarded inside).
@@ -29,11 +40,7 @@ enum Bootstrap {
         let rc = (try? context.fetchCount(FetchDescriptor<RetroCell>())) ?? 0
         let wb = (try? context.fetchCount(FetchDescriptor<WorkoutBlock>())) ?? 0
         DebugLog.shared.add("bootstrap: dailyMetrics=\(dm) retroCells=\(rc) workouts=\(wb)")
-        for key in ["reading", "glucose", "bp_sys", "ear", "porn", "meditation"] {
-            let predicate = #Predicate<DailyMetric> { $0.metricKey == key }
-            let c = (try? context.fetchCount(FetchDescriptor(predicate: predicate))) ?? 0
-            DebugLog.shared.add("manual \(key)=\(c)")
-        }
+        return forcedRetro
     }
 
     /// Wipes and reseeds the retro matrix from the bundled CSV.

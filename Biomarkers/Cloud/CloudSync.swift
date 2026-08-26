@@ -148,6 +148,26 @@ final class CloudSync: ObservableObject {
         }
     }
 
+    /// Deletes the cloud retro collections, then backs up the (clean) local
+    /// copy — used after a force-reimport, since merge-writes never delete
+    /// stale/renamed docs, which otherwise re-merge into a mess on restore.
+    func cleanRetroAndBackup(context: ModelContext) async {
+        if uid == nil { await signIn() }
+        if let root = userDoc() {
+            for name in ["retroRows", "retroColumns", "retroCells"] {
+                if let docs = try? await root.collection(name).getDocuments() {
+                    for chunk in docs.documents.chunked(into: 400) {
+                        let batch = db.batch()
+                        for d in chunk { batch.deleteDocument(d.reference) }
+                        try? await batch.commit()
+                    }
+                }
+            }
+            DebugLog.shared.add("cloud: retro collections cleared")
+        }
+        await backup(context: context)
+    }
+
     // MARK: - Backup (local → cloud)
 
     func backup(context: ModelContext) async {

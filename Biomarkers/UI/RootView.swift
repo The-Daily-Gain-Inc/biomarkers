@@ -52,9 +52,13 @@ struct RootView: View {
             // Merge cloud data, seed bundled history (self-healing), then back up.
             await cloud.signIn()
             await cloud.restore(context: context)
-            Bootstrap.run(context: context)
+            let forcedRetro = Bootstrap.run(context: context)
             cloud.bootstrapDone = true
-            await cloud.backup(context: context)
+            if forcedRetro {
+                await cloud.cleanRetroAndBackup(context: context)
+            } else {
+                await cloud.backup(context: context)
+            }
         }
     }
 }

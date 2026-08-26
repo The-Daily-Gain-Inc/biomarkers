@@ -41,6 +41,11 @@ struct RetroMatrix: View {
                     } label: {
                         Label("Review a specific period", systemImage: "calendar")
                     }
+                    NavigationLink {
+                        RetroDatesList()
+                    } label: {
+                        Label("Browse by date", systemImage: "calendar.day.timeline.left")
+                    }
                 }
             } footer: {
                 Text("Step through each section one at a time with Next / Previous.")
