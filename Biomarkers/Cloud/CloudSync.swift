@@ -168,6 +168,19 @@ final class CloudSync: ObservableObject {
         await backup(context: context)
     }
 
+    /// Deletes specific documents from a user collection (merge-writes never
+    /// delete, so removals must be pushed explicitly or they return on restore).
+    func delete(collection name: String, ids: [String]) async {
+        guard !ids.isEmpty else { return }
+        if uid == nil { await signIn() }
+        guard let root = userDoc() else { return }
+        for chunk in ids.chunked(into: 400) {
+            let batch = db.batch()
+            for id in chunk { batch.deleteDocument(root.collection(name).document(id)) }
+            try? await batch.commit()
+        }
+    }
+
     // MARK: - Backup (local → cloud)
 
     func backup(context: ModelContext) async {

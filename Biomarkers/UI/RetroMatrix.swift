@@ -53,10 +53,16 @@ struct RetroMatrix: View {
             .listRowSeparator(.hidden)
 
             if mode == .byDate {
-                Section("Dates") {
-                    ForEach(columns.reversed()) { col in
+                Section {
+                    let ordered = columns.reversed().map { $0 }
+                    ForEach(ordered) { col in
                         NavigationLink { RetroDateView(columnId: col.id) } label: { Text(col.label) }
                     }
+                    .onDelete { idx in idx.map { ordered[$0] }.forEach(deleteColumn) }
+                } header: {
+                    Text("Dates")
+                } footer: {
+                    Text("Swipe a date to delete that review.")
                 }
             } else {
                 Section {
@@ -88,9 +94,12 @@ struct RetroMatrix: View {
                                 Label(row.excluded ? "Include in reviews" : "Exclude from reviews",
                                       systemImage: row.excluded ? "eye" : "eye.slash")
                             }
+                            Button(role: .destructive) { deleteRow(row) } label: {
+                                Label("Delete Section", systemImage: "trash")
+                            }
                         }
                     }
-                    .onDelete { idx in idx.map { rows[$0] }.forEach(context.delete); try? context.save() }
+                    .onDelete { idx in idx.map { rows[$0] }.forEach(deleteRow) }
                 } header: {
                     Text("Sections")
                 } footer: {
@@ -116,6 +125,32 @@ struct RetroMatrix: View {
                 try? context.save()
             }
             Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    /// Deletes a section (row) with its cells, locally and in the cloud.
+    private func deleteRow(_ row: RetroRow) {
+        let cellIds = cells.filter { $0.rowId == row.id }.map(\.id)
+        cells.filter { $0.rowId == row.id }.forEach(context.delete)
+        let rowId = row.id
+        context.delete(row)
+        try? context.save()
+        Task {
+            await cloud.delete(collection: "retroCells", ids: cellIds)
+            await cloud.delete(collection: "retroRows", ids: [rowId])
+        }
+    }
+
+    /// Deletes a date (column) with its cells, locally and in the cloud.
+    private func deleteColumn(_ col: RetroColumn) {
+        let cellIds = cells.filter { $0.colId == col.id }.map(\.id)
+        cells.filter { $0.colId == col.id }.forEach(context.delete)
+        let colId = col.id
+        context.delete(col)
+        try? context.save()
+        Task {
+            await cloud.delete(collection: "retroCells", ids: cellIds)
+            await cloud.delete(collection: "retroColumns", ids: [colId])
         }
     }
 
