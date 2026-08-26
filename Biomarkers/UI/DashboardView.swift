@@ -179,7 +179,6 @@ struct TodayCard: View {
             Item(id: "o_activity", title: "Activity", value: score("o_activity"), unit: nil, tint: Color(hex: 0x00A6A0)),
             Item(id: "steps", title: "Steps", value: score("steps"), unit: nil, tint: Color(hex: 0x2E8BE6)),
             Item(id: "o_hrv", title: "HRV", value: score("o_hrv"), unit: "ms", tint: Color(hex: 0x8A6BD6)),
-            Item(id: "rhr", title: "Resting HR", value: score("rhr"), unit: "bpm", tint: Color(hex: 0xD1477A)),
         ]
     }
 
