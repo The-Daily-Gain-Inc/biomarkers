@@ -8,7 +8,7 @@ struct AppShortcuts: View {
 
     private struct Provider {
         let name: String
-        let scheme: String
+        let schemes: [String]   // tried in order before the App Store fallback
         let appStore: String
         let badge: AnyView
         let tint: Color
@@ -16,14 +16,14 @@ struct AppShortcuts: View {
 
     private var providers: [Provider] {
         [
-            Provider(name: "Oura", scheme: "oura://",
+            Provider(name: "Oura", schemes: ["oura://"],
                      appStore: "https://apps.apple.com/app/id1043837948",
                      badge: AnyView(OuraMark()), tint: Color(hex: 0x6C5CE7)),
-            Provider(name: "Garmin", scheme: "gcm://",
+            Provider(name: "Garmin", schemes: ["gcm://", "garminconnect://"],
                      appStore: "https://apps.apple.com/app/id583446403",
                      badge: AnyView(GarminMark()), tint: Color(hex: 0x007CC3)),
-            Provider(name: "Renpho", scheme: "renpho://",
-                     appStore: "https://apps.apple.com/app/id1522571121",
+            Provider(name: "Renpho", schemes: ["renphohealth://", "renpho://", "com.renpho.health://"],
+                     appStore: "https://apps.apple.com/app/id1502365467",
                      badge: AnyView(RenphoMark()), tint: Color(hex: 0x00B3A4)),
         ]
     }
@@ -52,9 +52,18 @@ struct AppShortcuts: View {
     }
 
     private func open(_ p: Provider) {
-        guard let url = URL(string: p.scheme) else { return }
+        tryOpen(p.schemes, appStore: p.appStore)
+    }
+
+    /// Tries each scheme in turn; if none opens (app not installed / wrong
+    /// scheme), falls back to the App Store page.
+    private func tryOpen(_ schemes: [String], appStore: String) {
+        guard let first = schemes.first, let url = URL(string: first) else {
+            if let store = URL(string: appStore) { openURL(store) }
+            return
+        }
         openURL(url) { accepted in
-            if !accepted, let store = URL(string: p.appStore) { openURL(store) }
+            if !accepted { tryOpen(Array(schemes.dropFirst()), appStore: appStore) }
         }
     }
 }
