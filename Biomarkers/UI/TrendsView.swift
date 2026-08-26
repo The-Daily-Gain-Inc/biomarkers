@@ -90,7 +90,7 @@ struct TrendsView: View {
         let changes: [(metric: Metric, better: Bool, pct: Double)] = visibleMetrics.compactMap { m in
             guard let cur = values[m.id]?[0], let prev = values[m.id]?[1], prev != 0, cur != prev else { return nil }
             let up = cur > prev
-            let better = (DashboardModel.higherIsBetter[m.id] ?? true) == up
+            let better = (DashboardModel.direction(for: m.id)) == up
             return (m, better, abs((cur - prev) / prev) * 100)
         }
         let improved = changes.filter { $0.better }.sorted { $0.pct > $1.pct }
@@ -215,7 +215,7 @@ struct TrendsView: View {
                 .foregroundStyle(value == nil ? .secondary : .primary)
             if let value, let prev, value != prev {
                 let up = value > prev
-                let better = (DashboardModel.higherIsBetter[id] ?? true) == up
+                let better = (DashboardModel.direction(for: id)) == up
                 Image(systemName: up ? "arrow.up" : "arrow.down")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(better ? Color.green : Color.red)
@@ -224,7 +224,7 @@ struct TrendsView: View {
     }
 
     private func formatted(id: String, _ value: Double) -> String {
-        if let spec = DashboardModel.specs[id] { return spec.format(value) }
+        if let spec = DashboardModel.spec(for: id) { return spec.format(value) }
         return String(Int(value))   // activity metrics
     }
 
@@ -259,7 +259,7 @@ struct TrendsView: View {
                     case "load": let s = acts.map(\.trainingLoad).reduce(0, +); if s > 0 { perWeek[i] = s }
                     default: break
                     }
-                } else if let spec = DashboardModel.specs[id], let map = dayMap[id] {
+                } else if let spec = DashboardModel.spec(for: id), let map = dayMap[id] {
                     var vals: [(Date, Double)] = []
                     var d = w.start
                     while d <= w.end {

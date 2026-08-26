@@ -85,12 +85,17 @@ struct SettingsView: View {
 
                 Section {
                     NavigationLink {
+                        CustomBiomarkersView()
+                    } label: {
+                        Label("Custom Biomarkers", systemImage: "plus.circle")
+                    }
+                    NavigationLink {
                         DataExplorerView()
                     } label: {
                         Label("All Metrics (raw)", systemImage: "list.bullet.rectangle")
                     }
                 } footer: {
-                    Text("Every field Garmin and Oura relay for the latest day.")
+                    Text("Add your own biomarkers, or browse every field Garmin and Oura relay for the latest day.")
                 }
                 Section("Profile") {
                     DatePicker("Date of Birth", selection: dobBinding,

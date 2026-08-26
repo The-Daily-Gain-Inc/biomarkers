@@ -67,7 +67,14 @@ final class DashboardModel: ObservableObject {
 
     /// Manually-entered metrics: (key, label, unit). Logged via the Log sheet,
     /// cached like everything else so they appear on the dashboard and Trends.
-    static let manualMetrics: [(key: String, label: String, unit: String?)] = [
+    /// Built-in manual metrics plus any user-defined custom biomarkers.
+    static var manualMetrics: [(key: String, label: String, unit: String?)] {
+        builtinManualMetrics + CustomMetricStore.all().map {
+            ($0.id, $0.name, $0.unit.isEmpty ? nil : $0.unit)
+        }
+    }
+
+    static let builtinManualMetrics: [(key: String, label: String, unit: String?)] = [
         ("glucose", "Glucose", "mg/dL"),
         ("bp_sys", "BP Systolic", "mmHg"),
         ("bp_dia", "BP Diastolic", "mmHg"),
@@ -77,7 +84,8 @@ final class DashboardModel: ObservableObject {
         ("meditation", "Meditation", nil),
     ]
 
-    static let placeholders: [Metric] = [
+    static var placeholders: [Metric] {
+        return [
         .init(id: "workout_cal", titleKey: "Calories Burned", provider: .garmin, unit: "kcal"),
         .init(id: "gym", titleKey: "Gym & Fitness", provider: .garmin, unit: "workouts"),
         .init(id: "vo2", titleKey: "VO2 Max", provider: .oura),
@@ -98,6 +106,23 @@ final class DashboardModel: ObservableObject {
         .init(id: "rp_weight", titleKey: "Weight", provider: .renpho, unit: "kg"),
     ] + DashboardModel.manualMetrics.map {
         Metric(id: $0.key, titleKey: $0.label, provider: .manual, unit: $0.unit)
+    }
+    }
+
+    /// Spec for a metric id — built-in, or synthesized for a custom biomarker.
+    static func spec(for id: String) -> Spec? {
+        if let s = specs[id] { return s }
+        if let c = CustomMetricStore.all().first(where: { $0.id == id }) {
+            let dec = c.decimals
+            return Spec(agg: .latest, format: { dec > 0 ? String(format: "%.\(dec)f", $0) : String(Int($0.rounded())) })
+        }
+        return nil
+    }
+
+    /// Direction (higher-is-better) for a metric id, including custom ones.
+    static func direction(for id: String) -> Bool {
+        if let b = higherIsBetter[id] { return b }
+        return CustomMetricStore.all().first { $0.id == id }?.higherIsBetter ?? true
     }
 
     /// How each cached-metric tile aggregates its 7-day series into a headline.
@@ -208,7 +233,9 @@ final class DashboardModel: ObservableObject {
     // MARK: - Cache read
 
     private func renderFromCache(context: ModelContext, days: [Date]) {
-        working = metrics
+        // Rebuild from the current placeholder set so newly-added custom
+        // biomarkers appear, then fill values (single publish at the end).
+        working = Self.placeholders
         staging = true
         defer {
             staging = false
@@ -218,7 +245,9 @@ final class DashboardModel: ObservableObject {
 
         let all = Array(metricIndex.values)
         let dayStarts = days.map { Calendar.current.startOfDay(for: $0) }
-        for (key, spec) in Self.specs {
+        for metric in Self.placeholders {
+            let key = metric.id
+            guard !Self.activityMetricIds.contains(key), let spec = Self.spec(for: key) else { continue }
             let rows = all.filter { $0.metricKey == key }
             // Body composition is measured irregularly — show the latest
             // reading and its recent trend, not just the trailing 7 days.

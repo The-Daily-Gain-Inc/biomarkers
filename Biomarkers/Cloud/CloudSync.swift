@@ -192,6 +192,9 @@ final class CloudSync: ObservableObject {
                 "heightCm": ud.integer(forKey: "profile.heightCm"),
                 "baselineKcal": ud.integer(forKey: "profile.baselineKcal"),
             ], merge: true)
+            // Custom biomarker definitions (values sync via dailyMetrics).
+            let customJSON = (ud.data(forKey: "customMetrics")).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+            try await root.collection("meta").document("customMetrics").setData(["json": customJSON], merge: true)
 
             lastBackup = Date()
             UserDefaults.standard.set(lastBackup!.timeIntervalSince1970, forKey: "cloud.lastBackup")
@@ -236,6 +239,10 @@ final class CloudSync: ObservableObject {
                 if let dob = d["dob"] as? Double, dob > 0 { ud.set(dob, forKey: "profile.dob") }
                 if let h = d["heightCm"] as? Int, h > 0 { ud.set(h, forKey: "profile.heightCm") }
                 if let k = d["baselineKcal"] as? Int, k > 0 { ud.set(k, forKey: "profile.baselineKcal") }
+            }
+            if let doc = try? await root.collection("meta").document("customMetrics").getDocument(),
+               let json = doc.data()?["json"] as? String, let data = json.data(using: .utf8) {
+                UserDefaults.standard.set(data, forKey: "customMetrics")
             }
             try? context.save()
         } catch {

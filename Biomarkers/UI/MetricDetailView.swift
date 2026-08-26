@@ -27,10 +27,10 @@ struct MetricDetailView: View {
 
     private var meta: Metric? { DashboardModel.placeholders.first { $0.id == id } }
     private var tint: Color { DashboardModel.tint(for: id) }
-    private var higherIsBetter: Bool { DashboardModel.higherIsBetter[id] ?? true }
+    private var higherIsBetter: Bool { DashboardModel.direction(for: id) }
 
     private func format(_ v: Double) -> String {
-        if let f = DashboardModel.specs[id]?.format { return f(v) }
+        if let f = DashboardModel.spec(for: id)?.format { return f(v) }
         return String(Int(v.rounded()))
     }
 
