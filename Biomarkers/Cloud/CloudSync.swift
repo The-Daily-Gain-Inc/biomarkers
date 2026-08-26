@@ -14,11 +14,15 @@ final class CloudSync: ObservableObject {
     @Published var isSignedIn = false
     @Published var isSyncing = false
     @Published var isAnonymous = true
+    /// True once the launch restore has finished (or been attempted), so local
+    /// seeding won't run over data that's still arriving from the cloud.
+    @Published var didRestore = false
     @Published var lastBackup: Date?
     @Published var lastError: String?
 
     private var uid: String?
     private var currentNonce: String?
+    private var pendingBackup: Task<Void, Never>?
     private var db: Firestore { Firestore.firestore() }
 
     init() {
@@ -119,6 +123,29 @@ final class CloudSync: ObservableObject {
         return db.collection("users").document(uid)
     }
 
+    /// Signs out of the current account and returns to a fresh anonymous user.
+    /// Local data stays on the device; sign in with Apple again to re-link.
+    func signOut() async {
+        try? Auth.auth().signOut()
+        uid = nil
+        isSignedIn = false
+        isAnonymous = true
+        await signIn()
+    }
+
+    // MARK: - Auto-backup (debounced)
+
+    /// Schedules a backup shortly after the last edit, coalescing rapid edits
+    /// into a single upload so the cloud stays current without manual taps.
+    func requestBackup(context: ModelContext, debounce: TimeInterval = 20) {
+        pendingBackup?.cancel()
+        pendingBackup = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(debounce * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await self?.backup(context: context)
+        }
+    }
+
     // MARK: - Backup (local → cloud)
 
     func backup(context: ModelContext) async {
@@ -159,6 +186,13 @@ final class CloudSync: ObservableObject {
                            (try? context.fetch(FetchDescriptor<LongevityRule>())) ?? [],
                            id: { $0.id }, data: { ["text": $0.text, "order": $0.order] })
 
+            let ud = UserDefaults.standard
+            try await root.collection("meta").document("profile").setData([
+                "age": ud.integer(forKey: "profile.age"),
+                "heightCm": ud.integer(forKey: "profile.heightCm"),
+                "baselineKcal": ud.integer(forKey: "profile.baselineKcal"),
+            ], merge: true)
+
             lastBackup = Date()
             UserDefaults.standard.set(lastBackup!.timeIntervalSince1970, forKey: "cloud.lastBackup")
         } catch {
@@ -179,6 +213,7 @@ final class CloudSync: ObservableObject {
     // MARK: - Restore (cloud → local)
 
     func restore(context: ModelContext) async {
+        defer { didRestore = true }
         if uid == nil { await signIn() }
         guard let root = userDoc() else { return }
         do {
@@ -195,6 +230,13 @@ final class CloudSync: ObservableObject {
             }
             // Retro rows/columns/cells, dreams, longevity (structure the user edits)
             try await restoreRetro(root: root, context: context)
+            // Profile (editable reference values)
+            if let doc = try? await root.collection("meta").document("profile").getDocument(), let d = doc.data() {
+                let ud = UserDefaults.standard
+                if let a = d["age"] as? Int, a > 0 { ud.set(a, forKey: "profile.age") }
+                if let h = d["heightCm"] as? Int, h > 0 { ud.set(h, forKey: "profile.heightCm") }
+                if let k = d["baselineKcal"] as? Int, k > 0 { ud.set(k, forKey: "profile.baselineKcal") }
+            }
             try? context.save()
         } catch {
             lastError = "Restore failed: \(error.localizedDescription)"

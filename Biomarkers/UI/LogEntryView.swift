@@ -6,6 +6,7 @@ import SwiftData
 /// Trends. Change the date to backfill / bulk-add history.
 struct LogEntryView: View {
     @Environment(\.modelContext) private var context
+    @EnvironmentObject private var cloud: CloudSync
     @Environment(\.dismiss) private var dismiss
 
     @State private var date = Date()
@@ -81,6 +82,7 @@ struct LogEntryView: View {
             }
         }
         try? context.save()
+        cloud.requestBackup(context: context)
         dismiss()
     }
 }

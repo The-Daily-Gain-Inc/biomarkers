@@ -7,6 +7,7 @@ struct DashboardView: View {
     @EnvironmentObject var ouraSession: OuraSession
     @EnvironmentObject var renphoSession: RenphoSession
     @EnvironmentObject var sync: SyncEngine
+    @EnvironmentObject var cloud: CloudSync
     @Environment(\.modelContext) private var context
     @StateObject private var model = DashboardModel()
     @AppStorage("backfillMonths") private var backfillMonths = 6
@@ -129,6 +130,7 @@ struct DashboardView: View {
             await sync.sync(context: context, session: session, backfillMonths: backfillMonths)
         }
         await model.load(context: context, garmin: session, oura: ouraSession, renpho: renphoSession)
+        cloud.requestBackup(context: context)
     }
 }
 
@@ -263,23 +265,26 @@ struct ProfileCard: View {
     @Query(filter: #Predicate<DailyMetric> { $0.metricKey == "rp_weight" },
            sort: \DailyMetric.day, order: .reverse)
     private var weights: [DailyMetric]
+    @AppStorage("profile.age") private var age = 0
+    @AppStorage("profile.heightCm") private var heightCm = 0
+    @AppStorage("profile.baselineKcal") private var baselineKcal = 0
 
-    /// Renpho stores kg; guard in case a value already arrives in lb.
-    private var weightLb: Double {
-        guard let v = weights.first?.value else { return ProfileConstants.weightLbs }
+    /// Latest weight in lb (Renpho stores kg), or nil if none recorded.
+    private var weightLb: Double? {
+        guard let v = weights.first?.value else { return nil }
         return v < 120 ? v * 2.20462 : v
     }
-    private var minProtein: Double { weightLb * 0.55 }
-    private var targetProtein: Double { minProtein + 40 }
 
     private var items: [(String, String)] {
-        [
-            ("Age", "\(ProfileConstants.age)"),
-            ("Height", "\(ProfileConstants.heightCm) cm"),
-            ("Weight", String(format: "%.1f lb", weightLb)),
-            ("Min protein", String(format: "%.0f g", minProtein)),
-            ("Target protein", String(format: "%.0f g", targetProtein)),
-            ("Baseline kcal", "\(ProfileConstants.baselineCalories)"),
+        let w = weightLb
+        let minP = w.map { $0 * 0.55 }
+        return [
+            ("Age", age > 0 ? "\(age)" : "—"),
+            ("Height", heightCm > 0 ? "\(heightCm) cm" : "—"),
+            ("Weight", w.map { String(format: "%.1f lb", $0) } ?? "—"),
+            ("Min protein", minP.map { String(format: "%.0f g", $0) } ?? "—"),
+            ("Target protein", minP.map { String(format: "%.0f g", $0 + 40) } ?? "—"),
+            ("Baseline kcal", baselineKcal > 0 ? "\(baselineKcal)" : "—"),
         ]
     }
     private let cols = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]

@@ -6,6 +6,7 @@ import SwiftData
 /// existing spreadsheet so old data shows up.
 struct RetroMatrix: View {
     @Environment(\.modelContext) private var context
+    @EnvironmentObject private var cloud: CloudSync
     @Query(sort: \RetroRow.order) private var rows: [RetroRow]
     @Query(sort: \RetroColumn.order) private var columns: [RetroColumn]
     @Query private var cells: [RetroCell]
@@ -76,6 +77,7 @@ struct RetroMatrix: View {
 /// One domain's full timeline of period entries.
 struct RetroDomainDetail: View {
     @Environment(\.modelContext) private var context
+    @EnvironmentObject private var cloud: CloudSync
     let row: RetroRow
     let columns: [RetroColumn]
     @Query private var cells: [RetroCell]
@@ -121,6 +123,7 @@ struct RetroDomainDetail: View {
             context.insert(RetroCell(rowId: row.id, colId: colId, text: text))
         }
         try? context.save()
+        cloud.requestBackup(context: context)
     }
 }
 

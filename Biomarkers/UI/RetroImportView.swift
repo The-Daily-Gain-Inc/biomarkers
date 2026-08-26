@@ -8,6 +8,7 @@ import SwiftData
 /// the cells, so your old data appears in the grid.
 struct RetroImportView: View {
     @Environment(\.modelContext) private var context
+    @EnvironmentObject private var cloud: CloudSync
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \RetroRow.order) private var rows: [RetroRow]
     @Query(sort: \RetroColumn.order) private var columns: [RetroColumn]
@@ -87,6 +88,7 @@ struct RetroImportView: View {
             }
         }
         try? context.save()
+        cloud.requestBackup(context: context)
         result = "Imported \(filledCells) cells across \(touchedRows) domains."
     }
 

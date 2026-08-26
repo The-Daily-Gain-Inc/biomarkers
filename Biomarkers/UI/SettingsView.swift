@@ -11,6 +11,9 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var context
     @AppStorage("backfillMonths") private var backfillMonths = 6
     @AppStorage("appearance") private var appearance = "system"
+    @AppStorage("profile.age") private var profileAge = 0
+    @AppStorage("profile.heightCm") private var profileHeight = 0
+    @AppStorage("profile.baselineKcal") private var profileKcal = 0
     @State private var showGarminLogin = false
     @State private var showOuraLogin = false
     @State private var ouraTokenInput = ""
@@ -55,6 +58,9 @@ struct SettingsView: View {
                     } else {
                         Label("Signed in with Apple", systemImage: "applelogo")
                             .foregroundStyle(.secondary)
+                        Button("Sign Out", role: .destructive) {
+                            Task { await cloud.signOut() }
+                        }
                     }
                     if let error = cloud.lastError {
                         Text(error).font(.caption).foregroundStyle(.red)
@@ -73,6 +79,17 @@ struct SettingsView: View {
                     }
                 } footer: {
                     Text("Every field Garmin and Oura relay for the latest day.")
+                }
+                Section("Profile") {
+                    Stepper(value: $profileAge, in: 0...120) {
+                        LabeledContent("Age") { Text(profileAge > 0 ? "\(profileAge)" : "—").foregroundStyle(.secondary) }
+                    }
+                    Stepper(value: $profileHeight, in: 0...250, step: 1) {
+                        LabeledContent("Height") { Text(profileHeight > 0 ? "\(profileHeight) cm" : "—").foregroundStyle(.secondary) }
+                    }
+                    Stepper(value: $profileKcal, in: 0...6000, step: 50) {
+                        LabeledContent("Baseline kcal") { Text(profileKcal > 0 ? "\(profileKcal)" : "—").foregroundStyle(.secondary) }
+                    }
                 }
                 Section("Appearance") {
                     Picker("Theme", selection: $appearance) {
