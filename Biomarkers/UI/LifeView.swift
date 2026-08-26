@@ -43,8 +43,16 @@ struct LifeView: View {
     }
 
     private func seedIfNeeded() {
-        // Only seed a neutral blank template when there's nothing locally and
-        // nothing arrived from the cloud. No personal data is bundled.
+        // One-time: import the bundled retro history into the local store, then
+        // the auto-backup uploads it to Firestore. Runs once; after it's in the
+        // cloud the bundled file can be removed so no personal data ships.
+        if !UserDefaults.standard.bool(forKey: "retroCsvV3"), importBundledCSV() {
+            UserDefaults.standard.set(true, forKey: "retroCsvV3")
+            try? context.save()
+            cloud.requestBackup(context: context)
+            return
+        }
+        // Otherwise seed a neutral blank template only when nothing exists.
         if rows.isEmpty {
             for (i, name) in RetroSeed.rows.enumerated() { context.insert(RetroRow(name: name, order: i)) }
             for (i, label) in RetroSeed.columns.enumerated() { context.insert(RetroColumn(label: label, order: i)) }
@@ -59,6 +67,40 @@ struct LifeView: View {
             for (i, r) in RetroSeed.longevityRules.enumerated() { context.insert(LongevityRule(text: r, order: i)) }
         }
         try? context.save()
+    }
+
+    /// Wipes and reseeds the retro matrix from the bundled CSV (comma-
+    /// delimited). Returns false if the file isn't bundled.
+    private func importBundledCSV() -> Bool {
+        guard let url = Bundle.main.url(forResource: "RetroSeed", withExtension: "csv"),
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return false }
+        let records = RetroImportView.parseDelimited(text, delimiter: ",")
+        guard records.count >= 2, let header = records.first else { return false }
+
+        try? context.delete(model: RetroCell.self)
+        try? context.delete(model: RetroRow.self)
+        try? context.delete(model: RetroColumn.self)
+
+        var colByIndex: [Int: RetroColumn] = [:]
+        for idx in 1..<header.count {
+            let label = header[idx].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !label.isEmpty else { continue }
+            let col = RetroColumn(label: label, order: idx - 1)
+            context.insert(col); colByIndex[idx] = col
+        }
+        var order = 0
+        for record in records.dropFirst() {
+            guard let name = record.first?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else { continue }
+            let row = RetroRow(name: name, order: order); order += 1
+            context.insert(row)
+            for idx in 1..<record.count {
+                guard let col = colByIndex[idx] else { continue }
+                let value = record[idx].trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !value.isEmpty, value != "-" else { continue }
+                context.insert(RetroCell(rowId: row.id, colId: col.id, text: value))
+            }
+        }
+        return true
     }
 }
 
