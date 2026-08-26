@@ -14,6 +14,9 @@ struct RetroMatrix: View {
     @State private var showImport = false
     @State private var showAddRow = false
     @State private var newName = ""
+    @State private var review: ReviewTarget?
+
+    struct ReviewTarget: Identifiable { let id: String }
 
     private var cellsByRow: [String: [String: String]] {
         var map: [String: [String: String]] = [:]
@@ -25,6 +28,24 @@ struct RetroMatrix: View {
 
     var body: some View {
         List {
+            Section {
+                Button { startTodayReview() } label: {
+                    Label("Start a Review", systemImage: "square.and.pencil")
+                        .font(.headline)
+                }
+                if !columns.isEmpty {
+                    Menu {
+                        ForEach(columns.reversed()) { col in
+                            Button(col.label) { review = ReviewTarget(id: col.id) }
+                        }
+                    } label: {
+                        Label("Review a specific period", systemImage: "calendar")
+                    }
+                }
+            } footer: {
+                Text("Step through each section one at a time with Next / Previous.")
+            }
+            Section("Sections") {
             ForEach(rows) { row in
                 NavigationLink {
                     RetroDomainDetail(row: row, columns: columns)
@@ -44,7 +65,10 @@ struct RetroMatrix: View {
                 }
             }
             .onDelete { idx in idx.map { rows[$0] }.forEach(context.delete); try? context.save() }
+            }
         }
+        .navigationTitle(Text("Retro"))
+        .sheet(item: $review) { target in RetroReview(columnId: target.id) }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button { showImport = true } label: { Image(systemName: "square.and.arrow.down") }
@@ -61,6 +85,19 @@ struct RetroMatrix: View {
                 try? context.save()
             }
             Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    /// Finds or creates a column for today and opens the guided review.
+    private func startTodayReview() {
+        let label = Date().formatted(.dateTime.month(.abbreviated).day().year())
+        if let existing = columns.first(where: { $0.label == label }) {
+            review = ReviewTarget(id: existing.id)
+        } else {
+            let col = RetroColumn(label: label, order: (columns.last?.order ?? -1) + 1)
+            context.insert(col)
+            try? context.save()
+            review = ReviewTarget(id: col.id)
         }
     }
 

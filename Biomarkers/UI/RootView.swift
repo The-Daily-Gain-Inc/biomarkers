@@ -25,15 +25,18 @@ struct RootView: View {
             TrendsView()
                 .tabItem { Label("Trends", systemImage: "tablecells") }
                 .tag(1)
+            NavigationStack { RetroMatrix() }
+                .tabItem { Label("Retro", systemImage: "square.and.pencil") }
+                .tag(2)
             WeeklyZonesView()
                 .tabItem { Label("Zones", systemImage: "heart.text.square") }
-                .tag(2)
+                .tag(3)
             LifeView()
                 .tabItem { Label("Life", systemImage: "target") }
-                .tag(3)
+                .tag(4)
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
-                .tag(4)
+                .tag(5)
         }
         .preferredColorScheme(colorScheme)
         .sheet(isPresented: $showGarminLogin) {

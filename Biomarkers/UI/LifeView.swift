@@ -4,7 +4,7 @@ import SwiftData
 /// Life-planning hub: Dreams (+ read-only profile), editable Longevity rules,
 /// and the Retro matrix — all backed by SwiftData and seeded on first launch.
 struct LifeView: View {
-    enum Tab: String, CaseIterable { case dreams = "Dreams", longevity = "Longevity", workout = "Workout", retro = "Retro" }
+    enum Tab: String, CaseIterable { case dreams = "Dreams", longevity = "Longevity", workout = "Workout" }
 
     @Environment(\.modelContext) private var context
     @EnvironmentObject private var cloud: CloudSync
@@ -26,7 +26,6 @@ struct LifeView: View {
                 case .dreams: DreamsSection()
                 case .longevity: LongevitySection()
                 case .workout: WorkoutSection()
-                case .retro: RetroMatrix()
                 }
             }
             .swipeSegments($tab)
