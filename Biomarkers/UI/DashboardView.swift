@@ -112,7 +112,10 @@ struct DashboardView: View {
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 4)
                         LazyVGrid(columns: columns, spacing: 12) {
-                            ForEach(group) { MetricTile(metric: $0) }
+                            ForEach(group) { metric in
+                                NavigationLink { MetricDetailView(id: metric.id) } label: { MetricTile(metric: metric) }
+                                    .buttonStyle(.plain)
+                            }
                         }
                     }
                 }
@@ -163,24 +166,27 @@ struct TodayCard: View {
 
     private let cols = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
 
-    private struct Item { let title: String; let value: String?; let unit: String?; let tint: Color }
+    private struct Item { let id: String; let title: String; let value: String?; let unit: String?; let tint: Color }
 
     private var items: [Item] {
         [
-            Item(title: "Readiness", value: score("readiness"), unit: nil, tint: Color(hex: 0x2FA36B)),
-            Item(title: "Sleep", value: score("sleep_score"), unit: nil, tint: Color(hex: 0x5B6CF0)),
-            Item(title: "Stress", value: latest("o_stress").map { String(format: "%.1f", $0) }, unit: "h", tint: Color(hex: 0xE0791F)),
-            Item(title: "Activity", value: score("o_activity"), unit: nil, tint: Color(hex: 0x00A6A0)),
-            Item(title: "Steps", value: score("steps"), unit: nil, tint: Color(hex: 0x2E8BE6)),
-            Item(title: "HRV", value: score("o_hrv"), unit: "ms", tint: Color(hex: 0x8A6BD6)),
-            Item(title: "Resting HR", value: score("rhr"), unit: "bpm", tint: Color(hex: 0xD1477A)),
+            Item(id: "readiness", title: "Readiness", value: score("readiness"), unit: nil, tint: Color(hex: 0x2FA36B)),
+            Item(id: "sleep_score", title: "Sleep", value: score("sleep_score"), unit: nil, tint: Color(hex: 0x5B6CF0)),
+            Item(id: "o_stress", title: "Stress", value: latest("o_stress").map { String(format: "%.1f", $0) }, unit: "h", tint: Color(hex: 0xE0791F)),
+            Item(id: "o_activity", title: "Activity", value: score("o_activity"), unit: nil, tint: Color(hex: 0x00A6A0)),
+            Item(id: "steps", title: "Steps", value: score("steps"), unit: nil, tint: Color(hex: 0x2E8BE6)),
+            Item(id: "o_hrv", title: "HRV", value: score("o_hrv"), unit: "ms", tint: Color(hex: 0x8A6BD6)),
+            Item(id: "rhr", title: "Resting HR", value: score("rhr"), unit: "bpm", tint: Color(hex: 0xD1477A)),
         ]
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             LazyVGrid(columns: cols, spacing: 10) {
-                ForEach(items, id: \.title) { cell($0) }
+                ForEach(items, id: \.id) { item in
+                    NavigationLink { MetricDetailView(id: item.id) } label: { cell(item) }
+                        .buttonStyle(.plain)
+                }
             }
             Divider()
             VStack(alignment: .leading, spacing: 6) {

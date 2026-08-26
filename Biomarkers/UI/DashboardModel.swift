@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import SwiftUI
 
 struct Metric: Identifiable {
     enum Provider: String {
@@ -29,6 +30,31 @@ final class DashboardModel: ObservableObject {
 
     /// Activity-derived tiles summed per week (not stored in DailyMetric).
     static let activityMetricIds: Set<String> = ["workout_cal", "gym", "load"]
+
+    /// Whether a higher value is the healthier direction (drives delta colors).
+    static let higherIsBetter: [String: Bool] = [
+        "workout_cal": true, "gym": true, "vo2": true, "fit_age": false,
+        "load": true, "rhr": false, "steps": true,
+        "readiness": true, "o_hrv": true, "o_stress": false, "o_activity": true, "spo2": true,
+        "years": true, "sleep_score": true, "sleep_hours": true,
+        "rp_bodyfat": false, "rp_weight": false,
+        "glucose": false, "bp_sys": false, "bp_dia": false, "ear": true,
+        "porn": false, "reading": true, "meditation": true,
+    ]
+
+    /// Accent color per metric (detail views, Today cells).
+    static func tint(for id: String) -> Color {
+        let map: [String: UInt32] = [
+            "readiness": 0x2FA36B, "sleep_score": 0x5B6CF0, "sleep_hours": 0x5B6CF0,
+            "o_stress": 0xE0791F, "o_activity": 0x00A6A0, "steps": 0x2E8BE6,
+            "o_hrv": 0x8A6BD6, "rhr": 0xD1477A, "vo2": 0x2FA36B, "spo2": 0x2E8BE6,
+            "rp_weight": 0x00A6A0, "rp_bodyfat": 0xE0791F, "fit_age": 0x8A6BD6,
+            "years": 0x2FA36B, "load": 0xD1477A, "workout_cal": 0xE0791F, "gym": 0x2E8BE6,
+            "glucose": 0xE0791F, "bp_sys": 0xD1477A, "bp_dia": 0xD1477A, "ear": 0x00A6A0,
+            "reading": 0x5B6CF0, "meditation": 0x2FA36B, "porn": 0xD1477A,
+        ]
+        return Color(hex: map[id] ?? 0x2E8BE6)
+    }
 
     /// Manually-entered metrics: (key, label, unit). Logged via the Log sheet,
     /// cached like everything else so they appear on the dashboard and Trends.

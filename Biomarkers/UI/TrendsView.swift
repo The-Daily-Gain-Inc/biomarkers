@@ -18,17 +18,6 @@ struct TrendsView: View {
     private let colWidth: CGFloat = 92
     private let nameWidth: CGFloat = 122
 
-    /// Whether a higher value is the healthier direction for each metric.
-    /// Used to color the week-over-week arrow green (better) or red (worse).
-    private static let higherIsBetter: [String: Bool] = [
-        "workout_cal": true, "gym": true, "vo2": true, "fit_age": false,
-        "load": true, "rhr": false, "steps": true,
-        "readiness": true, "o_hrv": true, "o_stress": false, "o_activity": true, "spo2": true,
-        "years": true, "sleep_score": true, "sleep_hours": true,
-        "rp_bodyfat": false, "rp_weight": false,
-        "glucose": false, "bp_sys": false, "bp_dia": false, "ear": true,
-        "porn": false, "reading": true, "meditation": true,
-    ]
 
     private var cal: Calendar { Calendar.current }
 
@@ -43,14 +32,18 @@ struct TrendsView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        // Precompute every cell value once per data change (not per cell) so
+        // scrolling and load-more stay smooth even with many weeks.
+        let ws = weeks
+        let values = computeValues(ws)
+        return NavigationStack {
             ScrollView(.vertical) {
                 HStack(alignment: .top, spacing: 0) {
                     frozenColumn
                     ScrollView(.horizontal, showsIndicators: true) {
                         HStack(spacing: 0) {
-                            ForEach(Array(weeks.enumerated()), id: \.offset) { idx, week in
-                                weekColumn(index: idx, week: week)
+                            ForEach(Array(ws.enumerated()), id: \.offset) { idx, week in
+                                weekColumn(index: idx, week: week, weekCount: ws.count, values: values)
                             }
                             loadMoreColumn
                         }
@@ -117,7 +110,8 @@ struct TrendsView: View {
         }
     }
 
-    private func weekColumn(index: Int, week: (start: Date, end: Date)) -> some View {
+    private func weekColumn(index: Int, week: (start: Date, end: Date), weekCount: Int,
+                            values: [String: [Int: Double]]) -> some View {
         VStack(spacing: 0) {
             VStack(spacing: 0) {
                 Text(index == 0 ? String(localized: "This wk") : header(week))
@@ -128,7 +122,9 @@ struct TrendsView: View {
             }
             .frame(width: colWidth, height: rowHeight)
             ForEach(DashboardModel.placeholders) { metric in
-                cellView(id: metric.id, index: index, week: week)
+                cellView(id: metric.id,
+                         value: values[metric.id]?[index],
+                         prev: index + 1 < weekCount ? values[metric.id]?[index + 1] : nil)
                     .frame(width: colWidth, height: rowHeight)
                     .overlay(alignment: .bottom) { Divider() }
             }
@@ -143,26 +139,18 @@ struct TrendsView: View {
     // MARK: - Cell rendering
 
     @ViewBuilder
-    private func cellView(id: String, index: Int, week: (start: Date, end: Date)) -> some View {
-        let value = numericValue(id: id, week: week)
+    private func cellView(id: String, value: Double?, prev: Double?) -> some View {
         HStack(spacing: 3) {
             Text(value.map { formatted(id: id, $0) } ?? "—")
                 .font(.system(.callout, design: .rounded))
                 .foregroundStyle(value == nil ? .secondary : .primary)
-            indicator(id: id, index: index, current: value)
-        }
-    }
-
-    /// Green/red up/down arrow comparing this week to the prior (older) week.
-    @ViewBuilder
-    private func indicator(id: String, index: Int, current: Double?) -> some View {
-        let prevWeek = index + 1 < weeks.count ? weeks[index + 1] : nil
-        if let current, let prevWeek, let prev = numericValue(id: id, week: prevWeek), current != prev {
-            let up = current > prev
-            let better = (Self.higherIsBetter[id] ?? true) == up
-            Image(systemName: up ? "arrow.up" : "arrow.down")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(better ? Color.green : Color.red)
+            if let value, let prev, value != prev {
+                let up = value > prev
+                let better = (DashboardModel.higherIsBetter[id] ?? true) == up
+                Image(systemName: up ? "arrow.up" : "arrow.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(better ? Color.green : Color.red)
+            }
         }
     }
 
@@ -171,41 +159,53 @@ struct TrendsView: View {
         return String(Int(value))   // activity metrics
     }
 
-    // MARK: - Cell values
+    // MARK: - Precomputed cell values
 
-    private func numericValue(id: String, week: (start: Date, end: Date)) -> Double? {
-        if DashboardModel.activityMetricIds.contains(id) {
-            return activityValue(id: id, week: week)
-        }
-        return dailyValue(id: id, week: week)
-    }
+    /// Builds metricId → weekIndex → value in one pass, using dictionary
+    /// lookups instead of re-filtering the whole dataset per cell.
+    private func computeValues(_ ws: [(start: Date, end: Date)]) -> [String: [Int: Double]] {
+        // Daily metric value keyed by (metricKey, startOfDay).
+        var dayMap: [String: [Date: Double]] = [:]
+        for m in dailyMetrics { dayMap[m.metricKey, default: [:]][m.day] = m.value }
 
-    private func dailyValue(id: String, week: (start: Date, end: Date)) -> Double? {
-        guard let spec = DashboardModel.specs[id] else { return nil }
-        let rows = dailyMetrics.filter { $0.metricKey == id && $0.day >= week.start && $0.day <= week.end }
-        guard !rows.isEmpty else { return nil }
-        switch spec.agg {
-        case .avg: return rows.map(\.value).reduce(0, +) / Double(rows.count)
-        case .latest: return rows.max(by: { $0.day < $1.day })?.value
+        // Activities bucketed per week index.
+        var actsByWeek: [Int: [CachedActivity]] = [:]
+        for (i, w) in ws.enumerated() {
+            let endEx = cal.date(byAdding: .day, value: 1, to: w.end)!
+            actsByWeek[i] = activities.filter { $0.startDate >= w.start && $0.startDate < endEx }
         }
-    }
+        let gymKeys = ["strength_training", "fitness_equipment", "indoor_cardio", "hiit", "yoga", "pilates"]
 
-    private func activityValue(id: String, week: (start: Date, end: Date)) -> Double? {
-        let endExclusive = cal.date(byAdding: .day, value: 1, to: week.end)!
-        let inWeek = activities.filter { $0.startDate >= week.start && $0.startDate < endExclusive }
-        guard !inWeek.isEmpty else { return nil }
-        switch id {
-        case "workout_cal":
-            let sum = inWeek.map(\.calories).reduce(0, +)
-            return sum > 0 ? sum : nil
-        case "gym":
-            let gymKeys = ["strength_training", "fitness_equipment", "indoor_cardio", "hiit", "yoga", "pilates"]
-            return Double(inWeek.filter { a in gymKeys.contains(where: { a.typeKey.contains($0) }) }.count)
-        case "load":
-            let sum = inWeek.map(\.trainingLoad).reduce(0, +)
-            return sum > 0 ? sum : nil
-        default:
-            return nil
+        var out: [String: [Int: Double]] = [:]
+        for metric in DashboardModel.placeholders {
+            let id = metric.id
+            var perWeek: [Int: Double] = [:]
+            for (i, w) in ws.enumerated() {
+                if DashboardModel.activityMetricIds.contains(id) {
+                    let acts = actsByWeek[i] ?? []
+                    guard !acts.isEmpty else { continue }
+                    switch id {
+                    case "workout_cal": let s = acts.map(\.calories).reduce(0, +); if s > 0 { perWeek[i] = s }
+                    case "gym": perWeek[i] = Double(acts.filter { a in gymKeys.contains { a.typeKey.contains($0) } }.count)
+                    case "load": let s = acts.map(\.trainingLoad).reduce(0, +); if s > 0 { perWeek[i] = s }
+                    default: break
+                    }
+                } else if let spec = DashboardModel.specs[id], let map = dayMap[id] {
+                    var vals: [(Date, Double)] = []
+                    var d = w.start
+                    while d <= w.end {
+                        if let v = map[cal.startOfDay(for: d)] { vals.append((d, v)) }
+                        d = cal.date(byAdding: .day, value: 1, to: d)!
+                    }
+                    guard !vals.isEmpty else { continue }
+                    switch spec.agg {
+                    case .avg: perWeek[i] = vals.map(\.1).reduce(0, +) / Double(vals.count)
+                    case .latest: perWeek[i] = vals.max { $0.0 < $1.0 }?.1
+                    }
+                }
+            }
+            out[id] = perWeek
         }
+        return out
     }
 }
