@@ -13,6 +13,13 @@ struct TrendsView: View {
     @Query private var dailyMetrics: [DailyMetric]
     @Query private var activities: [CachedActivity]
     @AppStorage("weeksOfHistory") private var weeksOfHistory = 6
+    @AppStorage("trendsHiddenCSV") private var trendsHiddenCSV = ""
+    @State private var showVisibility = false
+
+    private var visibleMetrics: [Metric] {
+        let hidden = Set(trendsHiddenCSV.split(separator: ",").map(String.init))
+        return DashboardModel.placeholders.filter { !hidden.contains($0.id) }
+    }
 
     private let rowHeight: CGFloat = 44
     private let colWidth: CGFloat = 92
@@ -52,6 +59,16 @@ struct TrendsView: View {
                 .padding(.horizontal)
             }
             .navigationTitle(Text("Trends"))
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { showVisibility = true } label: {
+                        Image(systemName: "slider.horizontal.3")
+                    }
+                }
+            }
+            .sheet(isPresented: $showVisibility) {
+                MetricVisibilityEditor(hiddenCSV: $trendsHiddenCSV)
+            }
             .task { await loadHistory() }
             .onChange(of: weeksOfHistory) { _, _ in Task { await loadHistory() } }
             .refreshable { await loadHistory() }
@@ -96,7 +113,7 @@ struct TrendsView: View {
             Text("Stat")
                 .font(.caption.weight(.semibold))
                 .frame(width: nameWidth, height: rowHeight, alignment: .leading)
-            ForEach(DashboardModel.placeholders) { metric in
+            ForEach(visibleMetrics) { metric in
                 NavigationLink { MetricDetailView(id: metric.id) } label: {
                     HStack(spacing: 3) {
                         Text(LocalizedStringKey(metric.titleKey))
@@ -128,7 +145,7 @@ struct TrendsView: View {
                     .foregroundStyle(.secondary)
             }
             .frame(width: colWidth, height: rowHeight)
-            ForEach(DashboardModel.placeholders) { metric in
+            ForEach(visibleMetrics) { metric in
                 NavigationLink { MetricDetailView(id: metric.id) } label: {
                     cellView(id: metric.id,
                              value: values[metric.id]?[index],

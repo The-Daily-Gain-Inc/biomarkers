@@ -23,6 +23,15 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    NavigationLink {
+                        DataExplorerView()
+                    } label: {
+                        Label("All Metrics (raw)", systemImage: "list.bullet.rectangle")
+                    }
+                } footer: {
+                    Text("Every field Garmin and Oura relay for the latest day.")
+                }
                 Section("Appearance") {
                     Picker("Theme", selection: $appearance) {
                         Text("System").tag("system")
