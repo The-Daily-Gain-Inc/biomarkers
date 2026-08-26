@@ -11,9 +11,21 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var context
     @AppStorage("backfillMonths") private var backfillMonths = 6
     @AppStorage("appearance") private var appearance = "system"
-    @AppStorage("profile.age") private var profileAge = 0
+    @AppStorage("profile.dob") private var profileDobTS = 0.0
     @AppStorage("profile.heightCm") private var profileHeight = 0
     @AppStorage("profile.baselineKcal") private var profileKcal = 0
+
+    private var dobBinding: Binding<Date> {
+        Binding(
+            get: { profileDobTS > 0 ? Date(timeIntervalSince1970: profileDobTS)
+                    : Calendar.current.date(byAdding: .year, value: -30, to: Date())! },
+            set: { profileDobTS = $0.timeIntervalSince1970 }
+        )
+    }
+    private var age: Int? {
+        guard profileDobTS > 0 else { return nil }
+        return Calendar.current.dateComponents([.year], from: Date(timeIntervalSince1970: profileDobTS), to: Date()).year
+    }
     @State private var showGarminLogin = false
     @State private var showOuraLogin = false
     @State private var ouraTokenInput = ""
@@ -81,12 +93,12 @@ struct SettingsView: View {
                     Text("Every field Garmin and Oura relay for the latest day.")
                 }
                 Section("Profile") {
-                    Stepper(value: $profileAge, in: 0...120) {
-                        LabeledContent("Age") { Text(profileAge > 0 ? "\(profileAge)" : "—").foregroundStyle(.secondary) }
-                    }
+                    DatePicker("Date of Birth", selection: dobBinding,
+                               in: ...Date(), displayedComponents: .date)
                     Stepper(value: $profileHeight, in: 0...250, step: 1) {
                         LabeledContent("Height") { Text(profileHeight > 0 ? "\(profileHeight) cm" : "—").foregroundStyle(.secondary) }
                     }
+                    if let age { LabeledContent("Age") { Text("\(age)").foregroundStyle(.secondary) } }
                     Stepper(value: $profileKcal, in: 0...6000, step: 50) {
                         LabeledContent("Baseline kcal") { Text(profileKcal > 0 ? "\(profileKcal)" : "—").foregroundStyle(.secondary) }
                     }

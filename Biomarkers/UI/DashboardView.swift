@@ -265,9 +265,14 @@ struct ProfileCard: View {
     @Query(filter: #Predicate<DailyMetric> { $0.metricKey == "rp_weight" },
            sort: \DailyMetric.day, order: .reverse)
     private var weights: [DailyMetric]
-    @AppStorage("profile.age") private var age = 0
+    @AppStorage("profile.dob") private var dobTS = 0.0
     @AppStorage("profile.heightCm") private var heightCm = 0
     @AppStorage("profile.baselineKcal") private var baselineKcal = 0
+
+    private var age: Int? {
+        guard dobTS > 0 else { return nil }
+        return Calendar.current.dateComponents([.year], from: Date(timeIntervalSince1970: dobTS), to: Date()).year
+    }
 
     /// Latest weight in lb (Renpho stores kg), or nil if none recorded.
     private var weightLb: Double? {
@@ -279,7 +284,7 @@ struct ProfileCard: View {
         let w = weightLb
         let minP = w.map { $0 * 0.55 }
         return [
-            ("Age", age > 0 ? "\(age)" : "—"),
+            ("Age", age.map { "\($0)" } ?? "—"),
             ("Height", heightCm > 0 ? "\(heightCm) cm" : "—"),
             ("Weight", w.map { String(format: "%.1f lb", $0) } ?? "—"),
             ("Min protein", minP.map { String(format: "%.0f g", $0) } ?? "—"),

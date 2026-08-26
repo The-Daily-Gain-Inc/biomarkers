@@ -188,7 +188,7 @@ final class CloudSync: ObservableObject {
 
             let ud = UserDefaults.standard
             try await root.collection("meta").document("profile").setData([
-                "age": ud.integer(forKey: "profile.age"),
+                "dob": ud.double(forKey: "profile.dob"),
                 "heightCm": ud.integer(forKey: "profile.heightCm"),
                 "baselineKcal": ud.integer(forKey: "profile.baselineKcal"),
             ], merge: true)
@@ -233,7 +233,7 @@ final class CloudSync: ObservableObject {
             // Profile (editable reference values)
             if let doc = try? await root.collection("meta").document("profile").getDocument(), let d = doc.data() {
                 let ud = UserDefaults.standard
-                if let a = d["age"] as? Int, a > 0 { ud.set(a, forKey: "profile.age") }
+                if let dob = d["dob"] as? Double, dob > 0 { ud.set(dob, forKey: "profile.dob") }
                 if let h = d["heightCm"] as? Int, h > 0 { ud.set(h, forKey: "profile.heightCm") }
                 if let k = d["baselineKcal"] as? Int, k > 0 { ud.set(k, forKey: "profile.baselineKcal") }
             }
