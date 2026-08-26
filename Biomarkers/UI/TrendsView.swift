@@ -97,14 +97,21 @@ struct TrendsView: View {
                 .font(.caption.weight(.semibold))
                 .frame(width: nameWidth, height: rowHeight, alignment: .leading)
             ForEach(DashboardModel.placeholders) { metric in
-                HStack(spacing: 4) {
-                    Text(LocalizedStringKey(metric.titleKey))
-                        .font(.caption)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                    Spacer(minLength: 0)
+                NavigationLink { MetricDetailView(id: metric.id) } label: {
+                    HStack(spacing: 3) {
+                        Text(LocalizedStringKey(metric.titleKey))
+                            .font(.caption)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .frame(width: nameWidth, height: rowHeight, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .frame(width: nameWidth, height: rowHeight, alignment: .leading)
+                .buttonStyle(.plain)
                 .overlay(alignment: .bottom) { Divider() }
             }
         }
@@ -122,11 +129,15 @@ struct TrendsView: View {
             }
             .frame(width: colWidth, height: rowHeight)
             ForEach(DashboardModel.placeholders) { metric in
-                cellView(id: metric.id,
-                         value: values[metric.id]?[index],
-                         prev: index + 1 < weekCount ? values[metric.id]?[index + 1] : nil)
-                    .frame(width: colWidth, height: rowHeight)
-                    .overlay(alignment: .bottom) { Divider() }
+                NavigationLink { MetricDetailView(id: metric.id) } label: {
+                    cellView(id: metric.id,
+                             value: values[metric.id]?[index],
+                             prev: index + 1 < weekCount ? values[metric.id]?[index + 1] : nil)
+                        .frame(width: colWidth, height: rowHeight)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .overlay(alignment: .bottom) { Divider() }
             }
         }
         .background(index % 2 == 1 ? Color.secondary.opacity(0.06) : Color.clear)
