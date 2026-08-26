@@ -111,6 +111,24 @@ final class GarminClient {
         return try await json(path: "/metrics-service/metrics/maxmet/daily/\(s)/\(e)") as? [[String: Any]] ?? []
     }
 
+    /// The battery level (0–100) of a Garmin device, if reported.
+    func deviceBattery() async throws -> Int? {
+        let obj = try await json(path: "/device-service/deviceservice/device-info/all")
+        return Self.firstBattery(in: obj)
+    }
+
+    private static func firstBattery(in value: Any) -> Int? {
+        if let dict = value as? [String: Any] {
+            for (k, v) in dict where k.lowercased().contains("battery") {
+                if let n = (v as? NSNumber)?.doubleValue, n >= 0, n <= 100 { return Int(n) }
+            }
+            for v in dict.values { if let b = firstBattery(in: v) { return b } }
+        } else if let arr = value as? [Any] {
+            for v in arr { if let b = firstBattery(in: v) { return b } }
+        }
+        return nil
+    }
+
     /// When a Garmin device last uploaded to Connect (true last-sync time).
     func lastDeviceSync() async throws -> Date? {
         let obj = try await json(path: "/device-service/deviceservice/mylastused") as? [String: Any]

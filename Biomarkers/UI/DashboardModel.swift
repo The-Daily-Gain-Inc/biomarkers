@@ -268,6 +268,9 @@ final class DashboardModel: ObservableObject {
             }
         }
         if let sync = try? await client.lastDeviceSync() { Self.setSynced("garmin", sync) }
+        if let battery = try? await client.deviceBattery() {
+            UserDefaults.standard.set(battery, forKey: "battery.garmin")
+        }
     }
 
     // MARK: - Renpho

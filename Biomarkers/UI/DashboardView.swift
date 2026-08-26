@@ -160,6 +160,7 @@ struct TodayCard: View {
     @AppStorage("lastUpdate.oura") private var ouraTS: Double = 0
     @AppStorage("lastUpdate.garmin") private var garminTS: Double = 0
     @AppStorage("lastUpdate.renpho") private var renphoTS: Double = 0
+    @AppStorage("battery.garmin") private var garminBattery: Int = -1
 
     private func latest(_ key: String) -> Double? { all.first { $0.metricKey == key }?.value }
     private func score(_ key: String) -> String? { latest(key).map { "\(Int($0.rounded()))" } }
@@ -192,9 +193,9 @@ struct TodayCard: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Last synced").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                 HStack(spacing: 14) {
-                    updated("Oura", ouraTS, Color(hex: 0x6C5CE7))
-                    updated("Garmin", garminTS, Color(hex: 0x007CC3))
-                    updated("Renpho", renphoTS, Color(hex: 0x00B3A4))
+                    updated("Oura", ouraTS, Color(hex: 0x6C5CE7), nil)
+                    updated("Garmin", garminTS, Color(hex: 0x007CC3), garminBattery >= 0 ? garminBattery : nil)
+                    updated("Renpho", renphoTS, Color(hex: 0x00B3A4), nil)
                 }
                 .font(.caption2)
             }
@@ -221,15 +222,32 @@ struct TodayCard: View {
         .background(item.tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
     }
 
-    private func updated(_ name: String, _ ts: Double, _ color: Color) -> some View {
+    private func updated(_ name: String, _ ts: Double, _ color: Color, _ battery: Int?) -> some View {
         HStack(spacing: 5) {
             Circle().fill(ts > 0 ? color : Color.secondary.opacity(0.4)).frame(width: 7, height: 7)
             VStack(alignment: .leading, spacing: 0) {
                 Text(name).foregroundStyle(.secondary)
                 Text(ts > 0 ? relative(ts) : "—").foregroundStyle(ts > 0 ? .primary : .tertiary)
+                if let battery {
+                    HStack(spacing: 2) {
+                        Image(systemName: batterySymbol(battery))
+                        Text("\(battery)%")
+                    }
+                    .foregroundStyle(battery <= 20 ? .red : .secondary)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func batterySymbol(_ level: Int) -> String {
+        switch level {
+        case ..<13: return "battery.0percent"
+        case ..<38: return "battery.25percent"
+        case ..<63: return "battery.50percent"
+        case ..<88: return "battery.75percent"
+        default: return "battery.100percent"
+        }
     }
 
     private func relative(_ ts: Double) -> String {
