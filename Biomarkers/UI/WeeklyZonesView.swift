@@ -14,16 +14,30 @@ struct WeeklyZonesView: View {
     @Query(sort: \CachedActivity.startDate, order: .reverse) private var activities: [CachedActivity]
     @Query private var sleepMetrics: [DailyMetric]
     @State private var weekOffset = 0
+    @State private var selectedDay = Calendar.current.startOfDay(for: Date())
 
-    /// The most recent night's sleep-stage minutes (deep, light, rem, awake).
-    private var latestSleepStages: (date: Date, minutes: [Double])? {
-        let byDay = Dictionary(grouping: sleepMetrics.filter { SleepPalette.keys.contains($0.metricKey) },
-                               by: { $0.day })
-        guard let day = byDay.keys.max() else { return nil }
-        let rows = byDay[day] ?? []
-        let minutes = SleepPalette.keys.map { key in rows.first { $0.metricKey == key }?.value ?? 0 }
-        return minutes.reduce(0, +) > 0 ? (day, minutes) : nil
+    /// HR-zone seconds for the selected day.
+    private var selectedDayZones: [Double] {
+        let cal = Calendar.current
+        return activities.filter { cal.isDate($0.startDate, inSameDayAs: selectedDay) }
+            .reduce(into: [Double](repeating: 0, count: 5)) { acc, a in
+                for (i, s) in a.fiveZoneSeconds.enumerated() { acc[i] += s }
+            }
     }
+
+    /// Sleep-stage minutes (deep, light, rem, awake) for the selected day.
+    private func sleepMinutes(for day: Date) -> [Double] {
+        let cal = Calendar.current
+        return SleepPalette.keys.map { key in
+            sleepMetrics.first { $0.metricKey == key && cal.isDate($0.day, inSameDayAs: day) }?.value ?? 0
+        }
+    }
+
+    /// Per-night sleep-stage minutes for the trailing 7 days.
+    private var weeklySleep: [(date: Date, minutes: [Double])] {
+        last7Days.map { ($0, sleepMinutes(for: $0)) }
+    }
+
 
     private var calendar: Calendar {
         var cal = Calendar(identifier: .iso8601)
@@ -68,32 +82,46 @@ struct WeeklyZonesView: View {
         NavigationStack {
             List {
                 Section {
-                    dailyChart
+                    dayNavigator
+                    Text("Heart Rate Zones").font(.caption).foregroundStyle(.secondary)
                         .listRowSeparator(.hidden)
-                    zoneLegend
+                    if selectedDayZones.reduce(0, +) > 0 {
+                        zoneBarChart(selectedDayZones).listRowSeparator(.hidden)
+                    } else {
+                        Text("No workout that day").font(.footnote).foregroundStyle(.secondary)
+                    }
+                    Text("Sleep Stages").font(.caption).foregroundStyle(.secondary)
                         .listRowSeparator(.hidden)
+                    if sleepMinutes(for: selectedDay).reduce(0, +) > 0 {
+                        sleepBarChart(sleepMinutes(for: selectedDay)).listRowSeparator(.hidden)
+                        sleepLegend.listRowSeparator(.hidden)
+                    } else {
+                        Text("No sleep data that night").font(.footnote).foregroundStyle(.secondary)
+                    }
                 } header: {
-                    Text("Last 7 Days")
+                    Text("By Day")
+                }
+                Section {
+                    dailyChart.listRowSeparator(.hidden)
+                    zoneLegend.listRowSeparator(.hidden)
+                } header: {
+                    Text("HR Zones — Last 7 Days")
+                }
+                Section {
+                    weeklySleepChart.listRowSeparator(.hidden)
+                    sleepLegend.listRowSeparator(.hidden)
+                } header: {
+                    Text("Sleep — Last 7 Nights")
                 }
                 Section {
                     weekPicker
-                    zoneChart
-                        .listRowSeparator(.hidden)
+                    zoneBarChart(zoneTotals).listRowSeparator(.hidden)
                 } header: {
-                    Text("Time in Zone")
-                }
-                Section {
-                    sleepStageChart
-                        .listRowSeparator(.hidden)
-                    sleepLegend
-                        .listRowSeparator(.hidden)
-                } header: {
-                    Text("Sleep Stages")
+                    Text("Time in Zone (Week)")
                 }
                 Section {
                     if weekActivities.isEmpty {
-                        Text("No activities this week")
-                            .foregroundStyle(.secondary)
+                        Text("No activities this week").foregroundStyle(.secondary)
                     }
                     ForEach(weekActivities) { activity in
                         ActivityRow(activity: activity)
@@ -103,11 +131,88 @@ struct WeeklyZonesView: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .navigationTitle(Text("HR Zones"))
+            .navigationTitle(Text("Zones"))
             .refreshable {
                 await sync.sync(context: context, session: session, backfillMonths: backfillMonths)
             }
         }
+    }
+
+    private var dayNavigator: some View {
+        let cal = Calendar.current
+        let isToday = cal.isDateInToday(selectedDay)
+        return HStack {
+            Button { selectedDay = cal.date(byAdding: .day, value: -1, to: selectedDay)! } label: {
+                Image(systemName: "chevron.left")
+            }.buttonStyle(.borderless)
+            Spacer()
+            Text(isToday ? String(localized: "Today")
+                 : selectedDay.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
+                .font(.headline)
+            Spacer()
+            Button { selectedDay = cal.date(byAdding: .day, value: 1, to: selectedDay)! } label: {
+                Image(systemName: "chevron.right")
+            }.buttonStyle(.borderless).disabled(isToday)
+        }
+    }
+
+    /// Weekly sleep stages, stacked per night.
+    private var weeklySleepChart: some View {
+        let data = weeklySleep
+        let hasData = data.contains { $0.minutes.reduce(0, +) > 0 }
+        return Group {
+            if hasData {
+                Chart {
+                    ForEach(Array(data.enumerated()), id: \.offset) { _, night in
+                        ForEach(0..<4, id: \.self) { stage in
+                            if night.minutes[stage] > 0 {
+                                BarMark(
+                                    x: .value("Night", night.date, unit: .day),
+                                    y: .value("Minutes", night.minutes[stage])
+                                )
+                                .foregroundStyle(SleepPalette.color(index: stage, scheme: scheme))
+                            }
+                        }
+                    }
+                }
+                .chartXAxis { AxisMarks(values: .stride(by: .day)) { _ in AxisValueLabel(format: .dateTime.weekday(.narrow)) } }
+                .frame(height: 170)
+            } else {
+                Text("No sleep data in the last 7 nights")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity).padding(.vertical, 20)
+            }
+        }
+    }
+
+    /// Horizontal bar chart of HR-zone time (seconds per zone).
+    private func zoneBarChart(_ secondsPerZone: [Double]) -> some View {
+        Chart(Array(secondsPerZone.enumerated()), id: \.offset) { item in
+            BarMark(x: .value("Time", item.element / 60), y: .value("Zone", "Z\(item.offset + 1)"))
+                .foregroundStyle(ZonePalette.color(zone: item.offset + 1, scheme: scheme))
+                .cornerRadius(4)
+                .annotation(position: .trailing, alignment: .leading) {
+                    Text(formatDuration(item.element)).font(.caption2).foregroundStyle(.secondary)
+                }
+        }
+        .chartXAxis(.hidden)
+        .chartYAxis { AxisMarks { _ in AxisValueLabel() } }
+        .frame(height: 170).padding(.vertical, 4)
+    }
+
+    /// Horizontal bar chart of sleep-stage minutes.
+    private func sleepBarChart(_ minutesPerStage: [Double]) -> some View {
+        Chart(Array(minutesPerStage.enumerated()), id: \.offset) { item in
+            BarMark(x: .value("Minutes", item.element), y: .value("Stage", SleepPalette.labels[item.offset]))
+                .foregroundStyle(SleepPalette.color(index: item.offset, scheme: scheme))
+                .cornerRadius(4)
+                .annotation(position: .trailing, alignment: .leading) {
+                    Text(formatDuration(item.element * 60)).font(.caption2).foregroundStyle(.secondary)
+                }
+        }
+        .chartXAxis(.hidden)
+        .chartYAxis { AxisMarks { _ in AxisValueLabel() } }
+        .frame(height: 150).padding(.vertical, 4)
     }
 
     /// Stacked minutes-per-zone for each of the last 7 days.
@@ -149,36 +254,6 @@ struct WeeklyZonesView: View {
 
     /// Last night's sleep stages as a horizontal bar chart, mirroring the
     /// activity zone chart.
-    private var sleepStageChart: some View {
-        Group {
-            if let stages = latestSleepStages {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(stages.date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day()))
-                        .font(.caption).foregroundStyle(.secondary)
-                    Chart(Array(stages.minutes.enumerated()), id: \.offset) { item in
-                        BarMark(
-                            x: .value("Minutes", item.element),
-                            y: .value("Stage", SleepPalette.labels[item.offset])
-                        )
-                        .foregroundStyle(SleepPalette.color(index: item.offset, scheme: scheme))
-                        .cornerRadius(4)
-                        .annotation(position: .trailing, alignment: .leading) {
-                            Text(formatDuration(item.element * 60))
-                                .font(.caption2).foregroundStyle(.secondary)
-                        }
-                    }
-                    .chartXAxis(.hidden)
-                    .chartYAxis { AxisMarks { _ in AxisValueLabel() } }
-                    .frame(height: 150)
-                }
-            } else {
-                Text("No sleep data yet — connect Oura and sync")
-                    .font(.footnote).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 20)
-            }
-        }
-    }
 
     private var sleepLegend: some View {
         HStack(spacing: 14) {
@@ -238,29 +313,6 @@ struct WeeklyZonesView: View {
         }
     }
 
-    private var zoneChart: some View {
-        Chart(Array(zoneTotals.enumerated()), id: \.offset) { item in
-            BarMark(
-                x: .value("Time", item.element / 60),
-                y: .value("Zone", "Z\(item.offset + 1)")
-            )
-            .foregroundStyle(ZonePalette.color(zone: item.offset + 1, scheme: scheme))
-            .cornerRadius(4)
-            .annotation(position: .trailing, alignment: .leading) {
-                Text(formatDuration(item.element))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .chartXAxis(.hidden)
-        .chartYAxis {
-            AxisMarks { _ in
-                AxisValueLabel()
-            }
-        }
-        .frame(height: 190)
-        .padding(.vertical, 4)
-    }
 }
 
 struct ActivityRow: View {

@@ -83,6 +83,10 @@ struct MetricDetailView: View {
 
             Section("Summary") { summary }
 
+            Section("Analysis") {
+                Text(analysis).font(.callout)
+            }
+
             if !series.isEmpty {
                 Section("Recent") {
                     ForEach(series.suffix(14).reversed(), id: \.date) { point in
@@ -183,6 +187,38 @@ struct MetricDetailView: View {
             Text(LocalizedStringKey(label)).font(.caption2).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// A short natural-language read on the range's trend and where the
+    /// latest value sits relative to the average.
+    private var analysis: String {
+        let vals = series.map(\.value)
+        guard let latest = vals.last, vals.count >= 2 else {
+            return "Not enough data in this range to analyze — log or sync more to see a trend."
+        }
+        let name = String(localized: String.LocalizationValue(meta?.titleKey ?? id))
+        let first = vals.first!
+        let avg = vals.reduce(0, +) / Double(vals.count)
+        let delta = latest - first
+        let dir = delta > 0 ? "up" : (delta < 0 ? "down" : "flat")
+        let better = higherIsBetter == (delta > 0)
+        let pct = first != 0 ? abs(delta / first) * 100 : 0
+
+        var parts: [String] = []
+        if delta == 0 {
+            parts.append("\(name) is flat over \(range.rawValue).")
+        } else {
+            let quality = better ? "an improvement" : "worth watching"
+            parts.append("\(name) is \(dir) \(format(abs(delta))) (\(Int(pct))%) over \(range.rawValue) — \(quality).")
+        }
+        let vsAvg = latest - avg
+        if abs(vsAvg) >= max(avg * 0.02, 0.1) {
+            let side = vsAvg > 0 ? "above" : "below"
+            parts.append("The latest reading is \(side) the \(range.rawValue) average of \(format(avg)).")
+        } else {
+            parts.append("The latest reading is right around the \(range.rawValue) average.")
+        }
+        return parts.joined(separator: " ")
     }
 
     private var yDomain: ClosedRange<Double> {

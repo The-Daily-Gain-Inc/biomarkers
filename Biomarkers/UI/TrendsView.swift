@@ -57,6 +57,9 @@ struct TrendsView: View {
                     }
                 }
                 .padding(.horizontal)
+
+                summary(values: values)
+                    .padding()
             }
             .navigationTitle(Text("Trends"))
             .toolbar {
@@ -78,6 +81,44 @@ struct TrendsView: View {
                 }
             }
         }
+    }
+
+    /// Week-over-week summary: how many metrics improved vs declined this
+    /// week, and the biggest movers in each direction.
+    @ViewBuilder
+    private func summary(values: [String: [Int: Double]]) -> some View {
+        let changes: [(metric: Metric, better: Bool, pct: Double)] = visibleMetrics.compactMap { m in
+            guard let cur = values[m.id]?[0], let prev = values[m.id]?[1], prev != 0, cur != prev else { return nil }
+            let up = cur > prev
+            let better = (DashboardModel.higherIsBetter[m.id] ?? true) == up
+            return (m, better, abs((cur - prev) / prev) * 100)
+        }
+        let improved = changes.filter { $0.better }.sorted { $0.pct > $1.pct }
+        let declined = changes.filter { !$0.better }.sorted { $0.pct > $1.pct }
+
+        VStack(alignment: .leading, spacing: 10) {
+            Text("This Week vs Last").font(.headline)
+            if changes.isEmpty {
+                Text("Not enough data to compare yet.").font(.footnote).foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 16) {
+                    Label("\(improved.count) improved", systemImage: "arrow.up.circle.fill").foregroundStyle(.green)
+                    Label("\(declined.count) declined", systemImage: "arrow.down.circle.fill").foregroundStyle(.red)
+                }
+                .font(.subheadline)
+                if let top = improved.first {
+                    Text("Biggest gain: \(String(localized: String.LocalizationValue(top.metric.titleKey))) (\(Int(top.pct))%)")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                if let worst = declined.first {
+                    Text("Needs attention: \(String(localized: String.LocalizationValue(worst.metric.titleKey))) (\(Int(worst.pct))%)")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
     }
 
     private func loadHistory() async {

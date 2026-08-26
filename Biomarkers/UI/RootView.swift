@@ -26,7 +26,7 @@ struct RootView: View {
                 .tabItem { Label("Trends", systemImage: "tablecells") }
                 .tag(1)
             WeeklyZonesView()
-                .tabItem { Label("HR Zones", systemImage: "heart.text.square") }
+                .tabItem { Label("Zones", systemImage: "heart.text.square") }
                 .tag(2)
             LifeView()
                 .tabItem { Label("Life", systemImage: "target") }
