@@ -5,6 +5,7 @@ struct SettingsView: View {
     @EnvironmentObject var session: SessionStore
     @EnvironmentObject var ouraSession: OuraSession
     @EnvironmentObject var renphoSession: RenphoSession
+    @EnvironmentObject var cloud: CloudSync
     @EnvironmentObject var sync: SyncEngine
     @Environment(\.modelContext) private var context
     @AppStorage("backfillMonths") private var backfillMonths = 6
@@ -23,6 +24,33 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    HStack {
+                        Label("Cloud", systemImage: cloud.isSignedIn ? "checkmark.icloud.fill" : "icloud")
+                            .foregroundStyle(cloud.isSignedIn ? .green : .secondary)
+                        Spacer()
+                        if cloud.isSyncing { ProgressView() }
+                        else if let last = cloud.lastBackup {
+                            Text(last.formatted(.relative(presentation: .named))).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    Button("Back Up Now") {
+                        Task { await cloud.backup(context: context) }
+                    }
+                    .disabled(cloud.isSyncing)
+                    Button("Restore from Cloud") {
+                        Task { await cloud.restore(context: context) }
+                    }
+                    .disabled(cloud.isSyncing)
+                    if let error = cloud.lastError {
+                        Text(error).font(.caption).foregroundStyle(.red)
+                    }
+                } header: {
+                    Text("Cloud Backup")
+                } footer: {
+                    Text("Everything (metrics, activities, retro, dreams, rules) is mirrored to Firestore and restored on a fresh install.")
+                }
+
                 Section {
                     NavigationLink {
                         DataExplorerView()

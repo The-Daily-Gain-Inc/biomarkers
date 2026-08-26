@@ -2,6 +2,8 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject var session: SessionStore
+    @EnvironmentObject var cloud: CloudSync
+    @Environment(\.modelContext) private var context
     @State private var showGarminLogin = false
     @AppStorage("appearance") private var appearance = "system"
 
@@ -42,6 +44,12 @@ struct RootView: View {
             if !session.isLoggedIn && !UserDefaults.standard.bool(forKey: "SkipAutoLogin") {
                 showGarminLogin = true
             }
+        }
+        .task {
+            // Merge any cloud data into the local store, then back up.
+            await cloud.signIn()
+            await cloud.restore(context: context)
+            await cloud.backup(context: context)
         }
     }
 }

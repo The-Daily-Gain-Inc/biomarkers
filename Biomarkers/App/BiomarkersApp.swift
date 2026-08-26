@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import FirebaseCore
 
 @main
 struct BiomarkersApp: App {
@@ -8,6 +9,11 @@ struct BiomarkersApp: App {
     @StateObject private var renphoSession = RenphoSession()
     @StateObject private var sync = SyncEngine()
     @StateObject private var zones = ZoneStore()
+    @StateObject private var cloud = CloudSync()
+
+    init() {
+        FirebaseApp.configure()
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -17,6 +23,7 @@ struct BiomarkersApp: App {
                 .environmentObject(renphoSession)
                 .environmentObject(sync)
                 .environmentObject(zones)
+                .environmentObject(cloud)
         }
         .modelContainer(for: [
             CachedActivity.self, DailyMetric.self,

@@ -3,12 +3,21 @@ options:
   bundleIdPrefix: ca.thedailygain
   deploymentTarget:
     iOS: "17.0"
+packages:
+  Firebase:
+    url: https://github.com/firebase/firebase-ios-sdk.git
+    from: "11.0.0"
 targets:
   Biomarkers:
     type: application
     platform: iOS
     sources:
       - Biomarkers
+    dependencies:
+      - package: Firebase
+        product: FirebaseFirestore
+      - package: Firebase
+        product: FirebaseAuth
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ca.thedailygain.biomarkers

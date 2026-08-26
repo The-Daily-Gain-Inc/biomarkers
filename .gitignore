@@ -4,3 +4,7 @@ DerivedData/
 *.xcodeproj
 Biomarkers/App/Secrets.swift
 build/
+
+Biomarkers.xcodeproj/
+build/
+Biomarkers/Resources/GoogleService-Info.plist

@@ -1,0 +1,170 @@
+import Foundation
+import SwiftData
+import FirebaseAuth
+import FirebaseFirestore
+
+/// Mirrors the local SwiftData stores to Firestore under an anonymous user so
+/// everything survives a phone wipe and can restore on a fresh install.
+/// Strategy: restore (merge cloud → local) on launch, then back up
+/// (local → cloud). Records are keyed by their stable ids; last write wins.
+@MainActor
+final class CloudSync: ObservableObject {
+    @Published var isSignedIn = false
+    @Published var isSyncing = false
+    @Published var lastBackup: Date?
+    @Published var lastError: String?
+
+    private var uid: String?
+    private var db: Firestore { Firestore.firestore() }
+
+    init() {
+        if let ts = UserDefaults.standard.object(forKey: "cloud.lastBackup") as? Double {
+            lastBackup = Date(timeIntervalSince1970: ts)
+        }
+    }
+
+    /// Signs in anonymously (stable per install) so data is scoped to the user.
+    func signIn() async {
+        if let user = Auth.auth().currentUser {
+            uid = user.uid; isSignedIn = true; return
+        }
+        do {
+            let result = try await Auth.auth().signInAnonymously()
+            uid = result.user.uid
+            isSignedIn = true
+        } catch {
+            lastError = "Cloud sign-in failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func userDoc() -> DocumentReference? {
+        guard let uid else { return nil }
+        return db.collection("users").document(uid)
+    }
+
+    // MARK: - Backup (local → cloud)
+
+    func backup(context: ModelContext) async {
+        guard !isSyncing else { return }
+        if uid == nil { await signIn() }
+        guard let root = userDoc() else { return }
+        isSyncing = true
+        lastError = nil
+        defer { isSyncing = false }
+
+        do {
+            try await push(root.collection("dailyMetrics"),
+                           (try? context.fetch(FetchDescriptor<DailyMetric>())) ?? [],
+                           id: { $0.id }, data: {
+                ["day": $0.day, "metricKey": $0.metricKey, "value": $0.value, "fetchedAt": $0.fetchedAt]
+            })
+            try await push(root.collection("activities"),
+                           (try? context.fetch(FetchDescriptor<CachedActivity>())) ?? [],
+                           id: { String($0.activityId) }, data: {
+                ["activityId": $0.activityId, "name": $0.name, "typeKey": $0.typeKey,
+                 "startDate": $0.startDate, "durationSec": $0.durationSec, "calories": $0.calories,
+                 "trainingLoad": $0.trainingLoad, "zoneSeconds": $0.zoneSeconds,
+                 "rawSummaryJSON": $0.rawSummaryJSON, "rawZonesJSON": $0.rawZonesJSON]
+            })
+            try await push(root.collection("retroRows"),
+                           (try? context.fetch(FetchDescriptor<RetroRow>())) ?? [],
+                           id: { $0.id }, data: { ["name": $0.name, "order": $0.order] })
+            try await push(root.collection("retroColumns"),
+                           (try? context.fetch(FetchDescriptor<RetroColumn>())) ?? [],
+                           id: { $0.id }, data: { ["label": $0.label, "order": $0.order] })
+            try await push(root.collection("retroCells"),
+                           (try? context.fetch(FetchDescriptor<RetroCell>())) ?? [],
+                           id: { $0.id }, data: { ["rowId": $0.rowId, "colId": $0.colId, "text": $0.text] })
+            try await push(root.collection("dreams"),
+                           (try? context.fetch(FetchDescriptor<RetroDream>())) ?? [],
+                           id: { $0.id }, data: { ["title": $0.title, "status": $0.status, "rationale": $0.rationale, "order": $0.order] })
+            try await push(root.collection("longevityRules"),
+                           (try? context.fetch(FetchDescriptor<LongevityRule>())) ?? [],
+                           id: { $0.id }, data: { ["text": $0.text, "order": $0.order] })
+
+            lastBackup = Date()
+            UserDefaults.standard.set(lastBackup!.timeIntervalSince1970, forKey: "cloud.lastBackup")
+        } catch {
+            lastError = "Backup failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Writes items in batches of 400 (Firestore's limit is 500 per commit).
+    private func push<T>(_ collection: CollectionReference, _ items: [T],
+                         id: (T) -> String, data: (T) -> [String: Any]) async throws {
+        for chunk in items.chunked(into: 400) {
+            let batch = db.batch()
+            for item in chunk { batch.setData(data(item), forDocument: collection.document(id(item)), merge: true) }
+            try await batch.commit()
+        }
+    }
+
+    // MARK: - Restore (cloud → local)
+
+    func restore(context: ModelContext) async {
+        if uid == nil { await signIn() }
+        guard let root = userDoc() else { return }
+        do {
+            // DailyMetric
+            let existingMetrics = Dictionary((try? context.fetch(FetchDescriptor<DailyMetric>()))?.map { ($0.id, $0) } ?? [],
+                                             uniquingKeysWith: { a, _ in a })
+            for doc in try await root.collection("dailyMetrics").getDocuments().documents {
+                let d = doc.data()
+                guard let key = d["metricKey"] as? String,
+                      let value = d["value"] as? Double,
+                      let day = (d["day"] as? Timestamp)?.dateValue() else { continue }
+                if let m = existingMetrics[doc.documentID] { m.value = value }
+                else { context.insert(DailyMetric(day: day, metricKey: key, value: value)) }
+            }
+            // Retro rows/columns/cells, dreams, longevity (structure the user edits)
+            try await restoreRetro(root: root, context: context)
+            try? context.save()
+        } catch {
+            lastError = "Restore failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func restoreRetro(root: DocumentReference, context: ModelContext) async throws {
+        let rows = Dictionary((try? context.fetch(FetchDescriptor<RetroRow>()))?.map { ($0.id, $0) } ?? [], uniquingKeysWith: { a, _ in a })
+        for doc in try await root.collection("retroRows").getDocuments().documents {
+            let d = doc.data()
+            guard let name = d["name"] as? String, let order = d["order"] as? Int else { continue }
+            if let r = rows[doc.documentID] { r.name = name; r.order = order }
+            else { context.insert(RetroRow(id: doc.documentID, name: name, order: order)) }
+        }
+        let cols = Dictionary((try? context.fetch(FetchDescriptor<RetroColumn>()))?.map { ($0.id, $0) } ?? [], uniquingKeysWith: { a, _ in a })
+        for doc in try await root.collection("retroColumns").getDocuments().documents {
+            let d = doc.data()
+            guard let label = d["label"] as? String, let order = d["order"] as? Int else { continue }
+            if let c = cols[doc.documentID] { c.label = label; c.order = order }
+            else { context.insert(RetroColumn(id: doc.documentID, label: label, order: order)) }
+        }
+        let cells = Dictionary((try? context.fetch(FetchDescriptor<RetroCell>()))?.map { ($0.id, $0) } ?? [], uniquingKeysWith: { a, _ in a })
+        for doc in try await root.collection("retroCells").getDocuments().documents {
+            let d = doc.data()
+            guard let rowId = d["rowId"] as? String, let colId = d["colId"] as? String, let text = d["text"] as? String else { continue }
+            if let c = cells[doc.documentID] { c.text = text }
+            else { context.insert(RetroCell(rowId: rowId, colId: colId, text: text)) }
+        }
+        let dreams = Dictionary((try? context.fetch(FetchDescriptor<RetroDream>()))?.map { ($0.id, $0) } ?? [], uniquingKeysWith: { a, _ in a })
+        for doc in try await root.collection("dreams").getDocuments().documents {
+            let d = doc.data()
+            guard let title = d["title"] as? String else { continue }
+            if let x = dreams[doc.documentID] { x.title = title; x.status = d["status"] as? String ?? x.status; x.rationale = d["rationale"] as? String ?? x.rationale }
+            else { context.insert(RetroDream(id: doc.documentID, title: title, status: d["status"] as? String ?? "", rationale: d["rationale"] as? String ?? "", order: d["order"] as? Int ?? 0)) }
+        }
+        let rules = Dictionary((try? context.fetch(FetchDescriptor<LongevityRule>()))?.map { ($0.id, $0) } ?? [], uniquingKeysWith: { a, _ in a })
+        for doc in try await root.collection("longevityRules").getDocuments().documents {
+            let d = doc.data()
+            guard let text = d["text"] as? String else { continue }
+            if let x = rules[doc.documentID] { x.text = text }
+            else { context.insert(LongevityRule(id: doc.documentID, text: text, order: d["order"] as? Int ?? 0)) }
+        }
+    }
+}
+
+private extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        stride(from: 0, to: count, by: size).map { Array(self[$0..<Swift.min($0 + size, count)]) }
+    }
+}
