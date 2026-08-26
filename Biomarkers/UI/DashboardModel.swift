@@ -130,10 +130,33 @@ final class DashboardModel: ObservableObject {
         "meditation":  .init(agg: .latest, format: { String(Int($0.rounded())) }),
     ]
 
+    /// In-memory index of DailyMetric by id, built once per load so upserts and
+    /// cache checks are O(1) dictionary hits instead of a SwiftData fetch each —
+    /// the fetch-per-write was what made syncs/load-more block the UI.
+    private var metricIndex: [String: DailyMetric] = [:]
+
+    private func loadIndex(_ context: ModelContext) {
+        metricIndex.removeAll(keepingCapacity: true)
+        if let all = try? context.fetch(FetchDescriptor<DailyMetric>()) {
+            for m in all { metricIndex[m.id] = m }
+        }
+    }
+
+    /// Values staged during a render pass, then flushed to `metrics` in one
+    /// assignment so the grid (and its charts) invalidate once, not per metric.
+    private var working: [Metric] = []
+    private var staging = false
+
     private func set(_ id: String, value: String?, series: [Double] = []) {
-        guard let idx = metrics.firstIndex(where: { $0.id == id }) else { return }
-        metrics[idx].value = value
-        metrics[idx].series = series
+        if staging {
+            guard let idx = working.firstIndex(where: { $0.id == id }) else { return }
+            working[idx].value = value
+            working[idx].series = series
+        } else {
+            guard let idx = metrics.firstIndex(where: { $0.id == id }) else { return }
+            metrics[idx].value = value
+            metrics[idx].series = series
+        }
     }
 
     func load(context: ModelContext, garmin: SessionStore, oura: OuraSession, renpho: RenphoSession) async {
@@ -146,6 +169,7 @@ final class DashboardModel: ObservableObject {
         let windowStart = cal.date(byAdding: .day, value: -6, to: todayStart)!
         let days = (0..<7).map { cal.date(byAdding: .day, value: $0, to: windowStart)! }
 
+        loadIndex(context)
         // 1. Instant render from cache.
         renderFromCache(context: context, days: days)
 
@@ -173,6 +197,7 @@ final class DashboardModel: ObservableObject {
         let windowStart = cal.date(byAdding: .day, value: -(totalDays - 1), to: today)!
         let days = (0..<totalDays).map { cal.date(byAdding: .day, value: $0, to: windowStart)! }
 
+        loadIndex(context)
         async let g: Void = loadGarmin(context: context, garmin: garmin, days: days)
         async let o: Void = loadOura(context: context, oura: oura, windowStart: windowStart, todayStart: today)
         async let r: Void = loadRenpho(context: context, renpho: renpho)
@@ -183,9 +208,15 @@ final class DashboardModel: ObservableObject {
     // MARK: - Cache read
 
     private func renderFromCache(context: ModelContext, days: [Date]) {
+        working = metrics
+        staging = true
+        defer {
+            staging = false
+            metrics = working   // single publish → one grid invalidation
+        }
         loadFromActivityCache(context: context, windowStart: days.first!)
 
-        let all = (try? context.fetch(FetchDescriptor<DailyMetric>())) ?? []
+        let all = Array(metricIndex.values)
         let dayStarts = days.map { Calendar.current.startOfDay(for: $0) }
         for (key, spec) in Self.specs {
             let rows = all.filter { $0.metricKey == key }
@@ -228,19 +259,18 @@ final class DashboardModel: ObservableObject {
 
     private func upsert(_ context: ModelContext, day: Date, key: String, value: Double) {
         let id = DailyMetric.makeId(day: day, key: key)
-        let predicate = #Predicate<DailyMetric> { $0.id == id }
-        if let existing = try? context.fetch(FetchDescriptor(predicate: predicate)).first {
+        if let existing = metricIndex[id] {
             existing.value = value
             existing.fetchedAt = Date()
         } else {
-            context.insert(DailyMetric(day: day, metricKey: key, value: value))
+            let m = DailyMetric(day: day, metricKey: key, value: value)
+            context.insert(m)
+            metricIndex[id] = m
         }
     }
 
     private func isCached(_ context: ModelContext, day: Date, key: String) -> Bool {
-        let id = DailyMetric.makeId(day: day, key: key)
-        let predicate = #Predicate<DailyMetric> { $0.id == id }
-        return ((try? context.fetchCount(FetchDescriptor(predicate: predicate))) ?? 0) > 0
+        metricIndex[DailyMetric.makeId(day: day, key: key)] != nil
     }
 
     // MARK: - Garmin
