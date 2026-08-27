@@ -49,22 +49,17 @@ final class SyncEngine: ObservableObject {
                     progressText = String(localized: "Syncing \(summary.activityName ?? "activity")…")
                     var zoneSeconds: [Double] = []
                     var rawZones = ""
+                    var zonesChecked = false
                     do {
                         let (zones, raw) = try await client.hrTimeInZones(activityId: summary.activityId)
                         rawZones = String(data: raw, encoding: .utf8) ?? ""
-                        let byNumber = zones.compactMap { z -> (Int, Double)? in
-                            guard let n = z.zoneNumber, n >= 1 else { return nil }
-                            return (n, z.secsInZone ?? 0)
-                        }
-                        if let maxZone = byNumber.map(\.0).max() {
-                            zoneSeconds = [Double](repeating: 0, count: maxZone)
-                            for (n, secs) in byNumber { zoneSeconds[n - 1] += secs }
-                        }
+                        zoneSeconds = Self.parseZones(zones)
+                        zonesChecked = true   // definitive answer (even if empty)
                     } catch GarminError.needsLogin {
                         throw GarminError.needsLogin
                     } catch {
-                        // Zones missing for this activity (e.g. no HR data) — cache the
-                        // summary anyway so we never refetch it in a tight loop.
+                        // Fetch failed (rate limit / transient) — leave unchecked so
+                        // the repair pass retries it, rather than losing zones forever.
                     }
 
                     let rawSummary: String
@@ -84,7 +79,8 @@ final class SyncEngine: ObservableObject {
                         trainingLoad: summary.activityTrainingLoad ?? 0,
                         zoneSeconds: zoneSeconds,
                         rawSummaryJSON: rawSummary,
-                        rawZonesJSON: rawZones
+                        rawZonesJSON: rawZones,
+                        zonesChecked: zonesChecked
                     )
                     context.insert(cached)
                     knownIds.insert(summary.activityId)
@@ -99,6 +95,12 @@ final class SyncEngine: ObservableObject {
                 start += pageSize
             }
             try? context.save()
+
+            // Repair pass: re-fetch zones for cached activities whose zone
+            // fetch previously failed (empty + not definitively checked), so a
+            // rate-limited backfill fills in over subsequent syncs.
+            await repairMissingZones(context: context, client: client)
+
             UserDefaults.standard.set(Date(), forKey: "lastGarminSync")
         } catch GarminError.needsLogin {
             lastError = String(localized: "Garmin session expired — please sign in again.")
@@ -106,6 +108,46 @@ final class SyncEngine: ObservableObject {
             lastError = error.localizedDescription
         }
         return added
+    }
+
+    /// Retries the HR-zone fetch for up to `limit` activities that are missing
+    /// zones and haven't been definitively checked yet.
+    private func repairMissingZones(context: ModelContext, client: GarminClient, limit: Int = 80) async {
+        let all = (try? context.fetch(FetchDescriptor<CachedActivity>())) ?? []
+        let needed = all.filter { $0.zoneSeconds.isEmpty && !$0.zonesChecked && $0.durationSec > 0 }
+            .sorted { $0.startDate > $1.startDate }
+            .prefix(limit)
+        guard !needed.isEmpty else { return }
+        var fixed = 0
+        for act in needed {
+            progressText = String(localized: "Recovering zones…")
+            do {
+                let (zones, raw) = try await client.hrTimeInZones(activityId: act.activityId)
+                act.zoneSeconds = Self.parseZones(zones)
+                act.rawZonesJSON = String(data: raw, encoding: .utf8) ?? act.rawZonesJSON
+                act.zonesChecked = true
+                fixed += 1
+            } catch GarminError.needsLogin {
+                break
+            } catch {
+                // still failing — leave unchecked for a future sync
+            }
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        }
+        try? context.save()
+        if fixed > 0 { DebugLog.shared.add("zones repaired: \(fixed)") }
+    }
+
+    /// Sum seconds per zone (index 0 = Zone 1) from the raw zone list.
+    static func parseZones(_ zones: [GarminZoneTime]) -> [Double] {
+        let byNumber = zones.compactMap { z -> (Int, Double)? in
+            guard let n = z.zoneNumber, n >= 1 else { return nil }
+            return (n, z.secsInZone ?? 0)
+        }
+        guard let maxZone = byNumber.map(\.0).max() else { return [] }
+        var out = [Double](repeating: 0, count: maxZone)
+        for (n, secs) in byNumber { out[n - 1] += secs }
+        return out
     }
 }
 

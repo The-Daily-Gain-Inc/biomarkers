@@ -18,11 +18,15 @@ final class CachedActivity {
     var rawSummaryJSON: String
     var rawZonesJSON: String
     var fetchedAt: Date
+    /// True once the zone endpoint returned a definitive answer (zones present
+    /// or a valid empty response). False means the fetch failed and should be
+    /// retried — so a rate-limited backfill doesn't leave zones missing forever.
+    var zonesChecked: Bool = false
 
     init(activityId: Int, name: String, typeKey: String, startDate: Date,
          durationSec: Double, calories: Double, trainingLoad: Double,
          zoneSeconds: [Double],
-         rawSummaryJSON: String, rawZonesJSON: String) {
+         rawSummaryJSON: String, rawZonesJSON: String, zonesChecked: Bool = false) {
         self.activityId = activityId
         self.name = name
         self.typeKey = typeKey
@@ -34,6 +38,7 @@ final class CachedActivity {
         self.rawSummaryJSON = rawSummaryJSON
         self.rawZonesJSON = rawZonesJSON
         self.fetchedAt = Date()
+        self.zonesChecked = zonesChecked
     }
 
     /// Zone seconds folded into 5 buckets (zones 6+ merge into Z5).
