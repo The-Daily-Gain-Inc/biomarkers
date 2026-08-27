@@ -21,7 +21,7 @@ struct WeeklyZonesView: View {
         let cal = Calendar.current
         return activities.filter { cal.isDate($0.startDate, inSameDayAs: selectedDay) }
             .reduce(into: [Double](repeating: 0, count: 5)) { acc, a in
-                for (i, s) in a.fiveZoneSeconds.enumerated() { acc[i] += s }
+                for (i, s) in a.zoneSeconds(floors: zones.floors).enumerated() { acc[i] += s }
             }
     }
 
@@ -72,7 +72,7 @@ struct WeeklyZonesView: View {
 
     private var zoneTotals: [Double] {
         weekActivities.reduce(into: [Double](repeating: 0, count: 5)) { acc, a in
-            for (i, secs) in a.fiveZoneSeconds.enumerated() { acc[i] += secs }
+            for (i, secs) in a.zoneSeconds(floors: zones.floors).enumerated() { acc[i] += secs }
         }
     }
 
@@ -87,10 +87,10 @@ struct WeeklyZonesView: View {
         let cal = Calendar.current
         return last7Days.map { day in
             let dayActs = activities.filter { cal.isDate($0.startDate, inSameDayAs: day) }
-            let zones = dayActs.reduce(into: [Double](repeating: 0, count: 5)) { acc, a in
-                for (i, s) in a.fiveZoneSeconds.enumerated() { acc[i] += s }
+            let dz = dayActs.reduce(into: [Double](repeating: 0, count: 5)) { acc, a in
+                for (i, s) in a.zoneSeconds(floors: zones.floors).enumerated() { acc[i] += s }
             }
-            return (day, zones)
+            return (day, dz)
         }
     }
 
@@ -149,7 +149,7 @@ struct WeeklyZonesView: View {
                         Text("No activities this week").foregroundStyle(.secondary)
                     }
                     ForEach(weekActivities) { activity in
-                        ActivityRow(activity: activity)
+                        ActivityRow(activity: activity, floors: zones.floors)
                     }
                 } header: {
                     Text("Activities")
@@ -342,6 +342,7 @@ struct WeeklyZonesView: View {
 
 struct ActivityRow: View {
     let activity: CachedActivity
+    var floors: [Int] = []
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
@@ -365,7 +366,7 @@ struct ActivityRow: View {
 
     /// Proportional stacked zone strip with 2px gaps between segments.
     private var zoneBar: some View {
-        let zones = activity.fiveZoneSeconds
+        let zones = activity.zoneSeconds(floors: floors)
         let total = zones.reduce(0, +)
         return GeometryReader { geo in
             HStack(spacing: 2) {

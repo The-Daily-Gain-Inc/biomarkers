@@ -74,6 +74,34 @@ final class GarminClient {
         return nil
     }
 
+    /// Raw HR time series for an activity: (bpm, elapsedSeconds) pairs, parsed
+    /// from the activity details endpoint. Nil samples (no HR) are skipped.
+    func hrSeries(activityId: Int) async throws -> (bpm: [Int], elapsed: [Double]) {
+        let obj = try await json(path: "/activity-service/activity/\(activityId)/details?maxChartSize=1200") as? [String: Any]
+        guard let descriptors = obj?["metricDescriptors"] as? [[String: Any]],
+              let samples = obj?["activityDetailMetrics"] as? [[String: Any]] else { return ([], []) }
+        var hrIdx: Int?, timeIdx: Int?
+        for d in descriptors {
+            let key = (d["key"] as? String ?? "").lowercased()
+            let idx = (d["metricsIndex"] as? NSNumber)?.intValue
+            if key.contains("heartrate") { hrIdx = idx }
+            else if key.contains("elapsedduration") || key.contains("duration") { if timeIdx == nil { timeIdx = idx } }
+        }
+        guard let hi = hrIdx else { return ([], []) }
+        var bpm: [Int] = [], elapsed: [Double] = []
+        for s in samples {
+            guard let m = s["metrics"] as? [Any] else { continue }
+            guard hi < m.count, let hr = (m[hi] as? NSNumber)?.doubleValue, hr > 0 else { continue }
+            bpm.append(Int(hr))
+            if let ti = timeIdx, ti < m.count, let t = (m[ti] as? NSNumber)?.doubleValue {
+                elapsed.append(t)
+            } else {
+                elapsed.append(Double(bpm.count - 1))
+            }
+        }
+        return (bpm, elapsed)
+    }
+
     // MARK: - Wellness / metrics (dashboard)
     // All parsed via JSONSerialization with defensive key digging — these
     // internal endpoints drift, and a missing key should degrade to "—",
