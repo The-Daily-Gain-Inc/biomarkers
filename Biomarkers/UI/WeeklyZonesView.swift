@@ -82,10 +82,19 @@ struct WeeklyZonesView: View {
         return (0..<7).map { cal.date(byAdding: .day, value: -6 + $0, to: today)! }
     }
 
-    private let trendWeeks = 12
+    /// How many ISO weeks of history to show: back to the oldest activity
+    /// (capped at 5 years to stay sane), minimum 12.
+    private var trendWeeks: Int {
+        let cal = calendar
+        guard let oldest = activities.map(\.startDate).min() else { return 12 }
+        let weeks = (cal.dateComponents([.weekOfYear],
+                     from: cal.dateInterval(of: .weekOfYear, for: oldest)!.start,
+                     to: weekInterval.start).weekOfYear ?? 0) + 1
+        return min(max(weeks, 12), 260)
+    }
 
-    /// Per-week zone seconds over the last `trendWeeks` ISO weeks (oldest
-    /// first), so the stacked trend shows how the zone mix shifts over time.
+    /// Per-week zone seconds over the trend window (oldest first), so the
+    /// stacked trend shows how the zone mix shifts over time.
     private var weeklyZoneTrend: [(weekStart: Date, zones: [Double])] {
         let cal = calendar
         let thisWeekStart = weekInterval.start
@@ -153,8 +162,9 @@ struct WeeklyZonesView: View {
                 Section {
                     zoneTrendChart.listRowSeparator(.hidden)
                     zoneLegend.listRowSeparator(.hidden)
+                    zoneTrendTable.listRowSeparator(.hidden)
                 } header: {
-                    Text("Zone Trend — Last \(trendWeeks) Weeks")
+                    Text("Zone Trend — \(trendWeeks) Weeks")
                 }
                 Section {
                     weeklySleepChart.listRowSeparator(.hidden)
@@ -281,25 +291,79 @@ struct WeeklyZonesView: View {
                                     y: .value("Minutes", mins)
                                 )
                                 .foregroundStyle(ZonePalette.color(zone: zone, scheme: scheme))
+                                .annotation(position: .top) {
+                                    // Total for the week, drawn once (on the top-most zone present).
+                                    if zone == topZone(week.zones) {
+                                        Text("\(Int((week.zones.reduce(0, +) / 60).rounded()))")
+                                            .font(.system(size: 8)).foregroundStyle(.secondary)
+                                    }
+                                }
                             }
                         }
                     }
                 }
                 .chartXAxis {
-                    AxisMarks(values: .stride(by: .weekOfYear, count: 2)) { _ in
+                    AxisMarks(values: .stride(by: .weekOfYear, count: max(1, trendWeeks / 8))) { _ in
                         AxisValueLabel(format: .dateTime.month(.abbreviated).day())
                     }
                 }
                 .frame(height: 190)
                 .padding(.vertical, 4)
             } else {
-                Text("No zone data in the last \(trendWeeks) weeks")
+                Text("No zone data yet")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 24)
             }
         }
+    }
+
+    /// Highest zone number (1…5) that has any time in the given week.
+    private func topZone(_ zones: [Double]) -> Int {
+        (1...5).last { zones[$0 - 1] > 0 } ?? 5
+    }
+
+    /// Numeric per-week breakdown: minutes in each zone plus the week total,
+    /// newest week first.
+    private var zoneTrendTable: some View {
+        let rows = weeklyZoneTrend.reversed().filter { $0.zones.reduce(0, +) > 0 }
+        return VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                Text("Week").font(.system(size: 10, weight: .semibold))
+                    .frame(width: 56, alignment: .leading)
+                ForEach(1...5, id: \.self) { z in
+                    Text("Z\(z)").font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(ZonePalette.color(zone: z, scheme: scheme))
+                        .frame(maxWidth: .infinity)
+                }
+                Text("Tot").font(.system(size: 10, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+            }
+            .padding(.bottom, 4)
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, week in
+                HStack(spacing: 0) {
+                    Text(week.weekStart.formatted(.dateTime.month(.abbreviated).day()))
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                        .frame(width: 56, alignment: .leading)
+                    ForEach(1...5, id: \.self) { z in
+                        Text(minsLabel(week.zones[z - 1]))
+                            .font(.system(size: 10, design: .rounded))
+                            .frame(maxWidth: .infinity)
+                    }
+                    Text(minsLabel(week.zones.reduce(0, +)))
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .frame(maxWidth: .infinity)
+                }
+                .padding(.vertical, 3)
+                Divider()
+            }
+        }
+    }
+
+    /// Whole minutes for a seconds value, or "—" when zero.
+    private func minsLabel(_ seconds: Double) -> String {
+        seconds > 0 ? "\(Int((seconds / 60).rounded()))" : "—"
     }
 
     /// Stacked minutes-per-zone for each of the last 7 days.
