@@ -163,6 +163,7 @@ struct ConnectBanner: View {
 /// each provider synced.
 struct TodayCard: View {
     @Query(sort: \DailyMetric.day, order: .reverse) private var all: [DailyMetric]
+    @Query(sort: \CachedActivity.startDate, order: .reverse) private var activities: [CachedActivity]
     @AppStorage("lastUpdate.oura") private var ouraTS: Double = 0
     @AppStorage("lastUpdate.garmin") private var garminTS: Double = 0
     @AppStorage("lastUpdate.renpho") private var renphoTS: Double = 0
@@ -170,6 +171,12 @@ struct TodayCard: View {
 
     private func latest(_ key: String) -> Double? { all.first { $0.metricKey == key }?.value }
     private func score(_ key: String) -> String? { latest(key).map { "\(Int($0.rounded()))" } }
+
+    /// Whether a workout was performed today (and how many).
+    private var workoutToday: String {
+        let count = activities.filter { Calendar.current.isDateInToday($0.startDate) }.count
+        return count > 0 ? "\(count)" : "No"
+    }
 
     private let cols = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
 
@@ -180,7 +187,7 @@ struct TodayCard: View {
             Item(id: "readiness", title: "Readiness", value: score("readiness"), unit: nil, tint: Color(hex: 0x2FA36B)),
             Item(id: "sleep_score", title: "Sleep", value: score("sleep_score"), unit: nil, tint: Color(hex: 0x5B6CF0)),
             Item(id: "o_stress", title: "Stress", value: latest("o_stress").map { String(format: "%.1f", $0) }, unit: "h", tint: Color(hex: 0xE0791F)),
-            Item(id: "o_activity", title: "Activity", value: score("o_activity"), unit: nil, tint: Color(hex: 0x00A6A0)),
+            Item(id: "gym", title: "Workout", value: workoutToday, unit: nil, tint: Color(hex: 0x00A6A0)),
             Item(id: "steps", title: "Steps", value: score("steps"), unit: nil, tint: Color(hex: 0x2E8BE6)),
             Item(id: "o_hrv", title: "HRV", value: score("o_hrv"), unit: "ms", tint: Color(hex: 0x8A6BD6)),
         ]
