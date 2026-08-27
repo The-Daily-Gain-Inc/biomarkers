@@ -82,6 +82,24 @@ struct WeeklyZonesView: View {
         return (0..<7).map { cal.date(byAdding: .day, value: -6 + $0, to: today)! }
     }
 
+    private let trendWeeks = 12
+
+    /// Per-week zone seconds over the last `trendWeeks` ISO weeks (oldest
+    /// first), so the stacked trend shows how the zone mix shifts over time.
+    private var weeklyZoneTrend: [(weekStart: Date, zones: [Double])] {
+        let cal = calendar
+        let thisWeekStart = weekInterval.start
+        return (0..<trendWeeks).reversed().map { back in
+            let start = cal.date(byAdding: .weekOfYear, value: -back, to: thisWeekStart)!
+            let interval = cal.dateInterval(of: .weekOfYear, for: start)!
+            let acts = activities.filter { interval.contains($0.startDate) }
+            let z = acts.reduce(into: [Double](repeating: 0, count: 5)) { acc, a in
+                for (i, s) in a.zoneSeconds(floors: zones.floors).enumerated() { acc[i] += s }
+            }
+            return (interval.start, z)
+        }
+    }
+
     /// Per-day zone seconds for the trailing 7 days (index 0 = oldest).
     private var dailyZoneSeconds: [(date: Date, zones: [Double])] {
         let cal = Calendar.current
@@ -131,6 +149,12 @@ struct WeeklyZonesView: View {
                     zoneLegend.listRowSeparator(.hidden)
                 } header: {
                     Text("HR Zones — Last 7 Days")
+                }
+                Section {
+                    zoneTrendChart.listRowSeparator(.hidden)
+                    zoneLegend.listRowSeparator(.hidden)
+                } header: {
+                    Text("Zone Trend — Last \(trendWeeks) Weeks")
                 }
                 Section {
                     weeklySleepChart.listRowSeparator(.hidden)
@@ -238,6 +262,44 @@ struct WeeklyZonesView: View {
         .chartXAxis(.hidden)
         .chartYAxis { AxisMarks { _ in AxisValueLabel() } }
         .frame(height: 150).padding(.vertical, 4)
+    }
+
+    /// Stacked minutes-per-zone per week over the trend window, so the shifting
+    /// zone mix (how much time in each zone) reads at a glance.
+    private var zoneTrendChart: some View {
+        let data = weeklyZoneTrend
+        let hasData = data.contains { $0.zones.reduce(0, +) > 0 }
+        return Group {
+            if hasData {
+                Chart {
+                    ForEach(Array(data.enumerated()), id: \.offset) { _, week in
+                        ForEach(1...5, id: \.self) { zone in
+                            let mins = week.zones[zone - 1] / 60
+                            if mins > 0 {
+                                BarMark(
+                                    x: .value("Week", week.weekStart, unit: .weekOfYear),
+                                    y: .value("Minutes", mins)
+                                )
+                                .foregroundStyle(ZonePalette.color(zone: zone, scheme: scheme))
+                            }
+                        }
+                    }
+                }
+                .chartXAxis {
+                    AxisMarks(values: .stride(by: .weekOfYear, count: 2)) { _ in
+                        AxisValueLabel(format: .dateTime.month(.abbreviated).day())
+                    }
+                }
+                .frame(height: 190)
+                .padding(.vertical, 4)
+            } else {
+                Text("No zone data in the last \(trendWeeks) weeks")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 24)
+            }
+        }
     }
 
     /// Stacked minutes-per-zone for each of the last 7 days.
