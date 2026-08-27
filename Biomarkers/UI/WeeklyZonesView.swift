@@ -16,12 +16,34 @@ struct WeeklyZonesView: View {
     @State private var weekOffset = 0
     @State private var selectedDay = Calendar.current.startOfDay(for: Date())
 
+    /// Per-activity bucketed zone seconds, computed once per (activities, Max HR)
+    /// change off the main thread. Every chart sums this instead of re-walking
+    /// each activity's HR samples on every body pass.
+    @State private var zoneCache: [Int: [Double]] = [:]
+    @State private var cacheKey = ""
+
+    /// Signature of the inputs the cache depends on: Max HR, activity count,
+    /// and total HR samples (so a backfill of raw HR re-triggers the rebuild).
+    private var cacheSignature: String {
+        let samples = activities.reduce(0) { $0 + $1.hrBpm.count }
+        return "\(zones.maxHR)-\(activities.count)-\(samples)"
+    }
+
+    /// Bucketed zone seconds for one activity, from the cache (falls back to
+    /// Garmin's split until the cache is built).
+    private func zoneSecs(_ a: CachedActivity) -> [Double] {
+        zoneCache[a.activityId] ?? a.fiveZoneSeconds
+    }
+
+    /// True once the heavy per-activity bucketing has produced results.
+    private var cacheReady: Bool { !zoneCache.isEmpty || activities.isEmpty }
+
     /// HR-zone seconds for the selected day.
     private var selectedDayZones: [Double] {
         let cal = Calendar.current
         return activities.filter { cal.isDate($0.startDate, inSameDayAs: selectedDay) }
             .reduce(into: [Double](repeating: 0, count: 5)) { acc, a in
-                for (i, s) in a.zoneSeconds(floors: zones.floors).enumerated() { acc[i] += s }
+                for (i, s) in zoneSecs(a).enumerated() { acc[i] += s }
             }
     }
 
@@ -72,7 +94,7 @@ struct WeeklyZonesView: View {
 
     private var zoneTotals: [Double] {
         weekActivities.reduce(into: [Double](repeating: 0, count: 5)) { acc, a in
-            for (i, secs) in a.zoneSeconds(floors: zones.floors).enumerated() { acc[i] += secs }
+            for (i, secs) in zoneSecs(a).enumerated() { acc[i] += secs }
         }
     }
 
@@ -86,7 +108,7 @@ struct WeeklyZonesView: View {
     /// computed against the custom bounds.
     private var allTimeZoneTotals: [Double] {
         activities.reduce(into: [Double](repeating: 0, count: 5)) { acc, a in
-            for (i, s) in a.zoneSeconds(floors: zones.floors).enumerated() { acc[i] += s }
+            for (i, s) in zoneSecs(a).enumerated() { acc[i] += s }
         }
     }
 
@@ -111,7 +133,7 @@ struct WeeklyZonesView: View {
             let interval = cal.dateInterval(of: .weekOfYear, for: start)!
             let acts = activities.filter { interval.contains($0.startDate) }
             let z = acts.reduce(into: [Double](repeating: 0, count: 5)) { acc, a in
-                for (i, s) in a.zoneSeconds(floors: zones.floors).enumerated() { acc[i] += s }
+                for (i, s) in zoneSecs(a).enumerated() { acc[i] += s }
             }
             return (interval.start, z)
         }
@@ -123,7 +145,7 @@ struct WeeklyZonesView: View {
         return last7Days.map { day in
             let dayActs = activities.filter { cal.isDate($0.startDate, inSameDayAs: day) }
             let dz = dayActs.reduce(into: [Double](repeating: 0, count: 5)) { acc, a in
-                for (i, s) in a.zoneSeconds(floors: zones.floors).enumerated() { acc[i] += s }
+                for (i, s) in zoneSecs(a).enumerated() { acc[i] += s }
             }
             return (day, dz)
         }
@@ -131,7 +153,25 @@ struct WeeklyZonesView: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            Group {
+                if cacheReady {
+                    content
+                } else {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("Crunching your zones…")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .navigationTitle(Text("Zones"))
+            .task(id: cacheSignature) { await buildCache() }
+        }
+    }
+
+    private var content: some View {
+        List {
                 Section {
                     dayNavigator
                     Text("Heart Rate Zones").font(.caption).foregroundStyle(.secondary)
@@ -203,11 +243,44 @@ struct WeeklyZonesView: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .navigationTitle(Text("Zones"))
             .refreshable {
                 await sync.sync(context: context, session: session, backfillMonths: backfillMonths)
             }
+    }
+
+    /// Rebuild the per-activity zone cache off the main thread when inputs
+    /// change, so the charts never re-walk HR samples during rendering.
+    private func buildCache() async {
+        guard cacheKey != cacheSignature else { return }
+        let floors = zones.floors
+        let snaps: [(Int, [Int], [Double], [Double])] =
+            activities.map { ($0.activityId, $0.hrBpm, $0.hrElapsed, $0.fiveZoneSeconds) }
+        let result = await Task.detached(priority: .userInitiated) { () -> [Int: [Double]] in
+            var dict = [Int: [Double]](minimumCapacity: snaps.count)
+            for s in snaps {
+                dict[s.0] = Self.bucket(bpm: s.1, elapsed: s.2, floors: floors, fallback: s.3)
+            }
+            return dict
+        }.value
+        zoneCache = result
+        cacheKey = cacheSignature
+    }
+
+    /// Time-in-zone from a raw HR series against `floors`; mirrors
+    /// CachedActivity.zoneSeconds(floors:) but runs on a Sendable snapshot.
+    nonisolated static func bucket(bpm: [Int], elapsed: [Double],
+                                   floors: [Int], fallback: [Double]) -> [Double] {
+        guard !bpm.isEmpty, floors.count == 5 else { return fallback }
+        var out = [Double](repeating: 0, count: 5)
+        for i in bpm.indices {
+            let hr = bpm[i]
+            guard hr >= floors[0] else { continue }
+            var zone = 0
+            for z in 0..<5 where hr >= floors[z] { zone = z }
+            let dwell = i + 1 < elapsed.count ? min(max(elapsed[i + 1] - elapsed[i], 0), 120) : 1
+            out[zone] += dwell
         }
+        return out
     }
 
     private var dayNavigator: some View {
