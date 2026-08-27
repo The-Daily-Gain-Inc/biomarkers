@@ -82,6 +82,14 @@ struct WeeklyZonesView: View {
         return (0..<7).map { cal.date(byAdding: .day, value: -6 + $0, to: today)! }
     }
 
+    /// Total seconds in each zone across every cached activity (all time),
+    /// computed against the custom bounds.
+    private var allTimeZoneTotals: [Double] {
+        activities.reduce(into: [Double](repeating: 0, count: 5)) { acc, a in
+            for (i, s) in a.zoneSeconds(floors: zones.floors).enumerated() { acc[i] += s }
+        }
+    }
+
     /// How many ISO weeks of history to show: back to the oldest activity
     /// (capped at 5 years to stay sane), minimum 12.
     private var trendWeeks: Int {
@@ -158,6 +166,11 @@ struct WeeklyZonesView: View {
                     zoneLegend.listRowSeparator(.hidden)
                 } header: {
                     Text("HR Zones — Last 7 Days")
+                }
+                Section {
+                    zonePieChart.listRowSeparator(.hidden)
+                } header: {
+                    Text("Zone Breakdown — All Time")
                 }
                 Section {
                     zoneTrendChart.listRowSeparator(.hidden)
@@ -315,6 +328,52 @@ struct WeeklyZonesView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 24)
+            }
+        }
+    }
+
+    /// All-time zone split as a donut, with each slice's share of total time
+    /// and a legend of minutes + percentage per zone.
+    private var zonePieChart: some View {
+        let totals = allTimeZoneTotals
+        let grand = totals.reduce(0, +)
+        return Group {
+            if grand > 0 {
+                Chart(Array(totals.enumerated()), id: \.offset) { item in
+                    SectorMark(
+                        angle: .value("Time", item.element),
+                        innerRadius: .ratio(0.55),
+                        angularInset: 1.5
+                    )
+                    .cornerRadius(3)
+                    .foregroundStyle(ZonePalette.color(zone: item.offset + 1, scheme: scheme))
+                }
+                .frame(height: 200)
+                .padding(.vertical, 4)
+
+                VStack(spacing: 6) {
+                    ForEach(Array(totals.enumerated()), id: \.offset) { item in
+                        let pct = item.element / grand * 100
+                        HStack(spacing: 8) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(ZonePalette.color(zone: item.offset + 1, scheme: scheme))
+                                .frame(width: 10, height: 10)
+                            Text("Z\(item.offset + 1)").font(.caption).frame(width: 22, alignment: .leading)
+                            Text(zones.rangeLabel(zone: item.offset + 1) + " bpm")
+                                .font(.caption2).foregroundStyle(.tertiary)
+                            Spacer()
+                            Text(formatDuration(item.element))
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text("\(Int(pct.rounded()))%")
+                                .font(.caption.weight(.semibold))
+                                .frame(width: 40, alignment: .trailing)
+                        }
+                    }
+                }
+            } else {
+                Text("No zone data yet")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity).padding(.vertical, 24)
             }
         }
     }
