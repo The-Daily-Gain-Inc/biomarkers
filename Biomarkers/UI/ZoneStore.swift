@@ -1,62 +1,57 @@
 import Foundation
 
-/// User-editable HR zone lower boundaries (bpm) for Z1…Z5. Defaults to the
-/// boundaries read from Garmin; persisted in UserDefaults. These are used as
-/// the reference labels in the HR Zones view and for computing zones from
-/// raw heart-rate samples (e.g. Oura).
+/// HR zones derived from a single editable Max HR. The five zone lower
+/// boundaries (Z1…Z5) are computed as fixed percentages of Max HR — the
+/// standard %HRmax model — so the user only ever tunes one number and the
+/// zones adjust on their own. Persisted in UserDefaults.
 @MainActor
 final class ZoneStore: ObservableObject {
-    @Published var floors: [Int] {
-        didSet { persist() }
+    @Published var maxHR: Int {
+        didSet { UserDefaults.standard.set(maxHR, forKey: Self.key) }
     }
     @Published var isFetchingDefaults = false
 
-    private static let key = "hrZoneFloors"
+    private static let key = "hrMaxHR"
 
-    /// Fallback if we've never fetched Garmin's — typical 5-zone split.
-    static let genericDefault = [100, 120, 140, 160, 175]
+    /// Lower bound of each zone as a fraction of Max HR (Z1…Z5).
+    static let zonePercents: [Double] = [0.50, 0.60, 0.70, 0.80, 0.90]
+
+    /// Typical Max HR fallback if we've never fetched from Garmin.
+    static let genericMaxHR = 190
 
     init() {
-        if let data = UserDefaults.standard.data(forKey: Self.key),
-           let saved = try? JSONDecoder().decode([Int].self, from: data), saved.count == 5 {
-            floors = saved
-        } else {
-            floors = Self.genericDefault
-        }
+        let saved = UserDefaults.standard.integer(forKey: Self.key)
+        maxHR = saved > 0 ? saved : Self.genericMaxHR
     }
 
-    /// True once the user (or a Garmin fetch) has set real boundaries.
-    var hasCustom: Bool { UserDefaults.standard.data(forKey: Self.key) != nil }
+    /// True once the user (or a Garmin fetch) has set a real Max HR.
+    var hasCustom: Bool { UserDefaults.standard.object(forKey: Self.key) != nil }
 
-    func set(zone: Int, bpm: Int) {
-        guard (1...5).contains(zone) else { return }
-        floors[zone - 1] = max(0, bpm)
+    /// Zone lower boundaries (bpm) for Z1…Z5, computed from Max HR.
+    var floors: [Int] {
+        Self.zonePercents.map { Int((Double(maxHR) * $0).rounded()) }
     }
 
-    /// Pull the boundaries from Garmin and adopt them as the defaults.
+    /// Pull Max HR from Garmin: infer it from the highest zone boundary
+    /// (Z5 low ≈ 90% of Max HR in Garmin's %HRmax model).
     func resetToGarmin(session: SessionStore) async {
         guard session.isLoggedIn else { return }
         isFetchingDefaults = true
         defer { isFetchingDefaults = false }
         let client = GarminClient(session: session)
-        if let g = try? await client.hrZoneBoundaries(), g.count == 5 {
-            floors = g
+        if let g = try? await client.hrZoneBoundaries(), let z5 = g.last, z5 > 0 {
+            maxHR = Int((Double(z5) / 0.90).rounded())
         }
     }
 
     /// "120–139" style label for a zone (open-ended for Z5).
     func rangeLabel(zone: Int) -> String {
+        let f = floors
         let i = zone - 1
-        guard floors.indices.contains(i) else { return "" }
-        if zone < 5, floors.indices.contains(i + 1) {
-            return "\(floors[i])–\(floors[i + 1] - 1)"
+        guard f.indices.contains(i) else { return "" }
+        if zone < 5, f.indices.contains(i + 1) {
+            return "\(f[i])–\(f[i + 1] - 1)"
         }
-        return "\(floors[i])+"
-    }
-
-    private func persist() {
-        if let data = try? JSONEncoder().encode(floors) {
-            UserDefaults.standard.set(data, forKey: Self.key)
-        }
+        return "\(f[i])+"
     }
 }

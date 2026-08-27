@@ -225,6 +225,18 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    HStack {
+                        Text("Max HR")
+                        Spacer()
+                        TextField("bpm", value: Binding(
+                            get: { zones.maxHR },
+                            set: { zones.maxHR = max(120, min(230, $0)) }
+                        ), format: .number)
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 64)
+                        Text("bpm").foregroundStyle(.secondary)
+                    }
                     ForEach(1...5, id: \.self) { zone in
                         HStack {
                             RoundedRectangle(cornerRadius: 3)
@@ -232,16 +244,8 @@ struct SettingsView: View {
                                 .frame(width: 14, height: 14)
                             Text("Zone \(zone)")
                             Spacer()
-                            TextField("bpm", value: Binding(
-                                get: { zones.floors[zone - 1] },
-                                set: { zones.set(zone: zone, bpm: $0) }
-                            ), format: .number)
-                            .keyboardType(.numberPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 64)
-                            Text(zone < 5 ? "–\(zones.floors.indices.contains(zone) ? String(zones.floors[zone] - 1) : "")" : "+ bpm")
+                            Text("\(Int(ZoneStore.zonePercents[zone - 1] * 100))% · \(zones.rangeLabel(zone: zone)) bpm")
                                 .foregroundStyle(.secondary)
-                                .frame(width: 56, alignment: .leading)
                         }
                     }
                     Button {
@@ -250,14 +254,14 @@ struct SettingsView: View {
                         if zones.isFetchingDefaults {
                             HStack { ProgressView(); Text("Fetching from Garmin…") }
                         } else {
-                            Text("Default to Garmin Zones")
+                            Text("Estimate Max HR from Garmin")
                         }
                     }
                     .disabled(!session.isLoggedIn || zones.isFetchingDefaults)
                 } header: {
                     Text("Heart Rate Zones")
                 } footer: {
-                    Text("Lower bpm bound for each zone. Historical Garmin activities keep Garmin's own zone split; these bounds label the HR Zones view and bucket raw-sample sources.")
+                    Text("Set your Max HR — the five zones adjust on their own as %HRmax (50/60/70/80/90%). Zone breakdowns are recomputed from each activity's heart-rate trace against these bounds.")
                 }
 
                 Section {
