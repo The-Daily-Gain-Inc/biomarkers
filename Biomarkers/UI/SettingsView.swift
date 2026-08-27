@@ -225,18 +225,7 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    HStack {
-                        Text("Max HR")
-                        Spacer()
-                        TextField("bpm", value: Binding(
-                            get: { zones.maxHR },
-                            set: { zones.maxHR = max(120, min(230, $0)) }
-                        ), format: .number)
-                        .keyboardType(.numberPad)
-                        .multilineTextAlignment(.trailing)
-                        .frame(width: 64)
-                        Text("bpm").foregroundStyle(.secondary)
-                    }
+                    MaxHRField(zones: zones)
                     ForEach(1...5, id: \.self) { zone in
                         HStack {
                             RoundedRectangle(cornerRadius: 3)
@@ -301,5 +290,45 @@ struct SettingsView: View {
 
     private func updateCount() {
         cachedCount = (try? context.fetchCount(FetchDescriptor<CachedActivity>())) ?? 0
+    }
+}
+
+/// Editable Max HR field that only commits (and clamps) when editing ends, so
+/// typing intermediate values doesn't fight the clamp on every keystroke.
+private struct MaxHRField: View {
+    @ObservedObject var zones: ZoneStore
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack {
+            Text("Max HR")
+            Spacer()
+            TextField("bpm", text: $text)
+                .keyboardType(.numberPad)
+                .multilineTextAlignment(.trailing)
+                .frame(width: 64)
+                .focused($focused)
+            Text("bpm").foregroundStyle(.secondary)
+        }
+        .onAppear { text = String(zones.maxHR) }
+        .onChange(of: focused) { _, isFocused in
+            if !isFocused { commit() }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                if focused {
+                    Spacer()
+                    Button("Done") { focused = false }
+                }
+            }
+        }
+    }
+
+    private func commit() {
+        let n = Int(text.filter(\.isNumber)) ?? zones.maxHR
+        let clamped = max(120, min(230, n))
+        zones.maxHR = clamped
+        text = String(clamped)
     }
 }
