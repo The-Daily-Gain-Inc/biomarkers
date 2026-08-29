@@ -15,27 +15,34 @@ struct RetroReview: View {
     let columnId: String
     @State private var index = 0
     @State private var showAddSection = false
+    @State private var showSections = false
     @State private var newSection = ""
+    @FocusState private var editorFocused: Bool
 
     private var column: RetroColumn? { columns.first { $0.id == columnId } }
     private var reviewRows: [RetroRow] { rows.filter { !$0.excluded } }
+    private var clampedIndex: Int { min(max(index, 0), max(0, reviewRows.count - 1)) }
+    private var currentRow: RetroRow? {
+        reviewRows.indices.contains(clampedIndex) ? reviewRows[clampedIndex] : nil
+    }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if reviewRows.isEmpty {
-                    ContentUnavailableView("No sections yet", systemImage: "square.stack",
-                                           description: Text("Add a section to start your review."))
-                } else {
-                    TabView(selection: $index) {
-                        ForEach(Array(reviewRows.enumerated()), id: \.offset) { i, row in
-                            page(row: row).tag(i)
-                        }
-                    }
-                    .tabViewStyle(.page(indexDisplayMode: .never))
-                    .animation(.easeInOut, value: index)
+                if let row = currentRow {
+                    // A single page swapped by the Next/Previous buttons. Using a
+                    // fresh view per index (via .id) resets the TextEditor's own
+                    // scroll to the top each step — no paging gesture to fight the
+                    // editor's internal scroll.
+                    page(row: row)
+                        .id(clampedIndex)
+                        .transition(.push(from: .trailing))
+                        .animation(.easeInOut, value: clampedIndex)
 
                     controls
+                } else {
+                    ContentUnavailableView("No sections yet", systemImage: "square.stack",
+                                           description: Text("Add a section to start your review."))
                 }
             }
             .navigationTitle(Text(column?.label ?? "Review"))
@@ -43,7 +50,14 @@ struct RetroReview: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { save(); dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
-                    Button { newSection = ""; showAddSection = true } label: { Image(systemName: "plus") }
+                    Menu {
+                        Button { newSection = ""; showAddSection = true } label: {
+                            Label("Add Section", systemImage: "plus")
+                        }
+                        Button { showSections = true } label: {
+                            Label("Manage Sections", systemImage: "slider.horizontal.3")
+                        }
+                    } label: { Image(systemName: "ellipsis.circle") }
                 }
             }
             .alert("Add Section", isPresented: $showAddSection) {
@@ -51,17 +65,30 @@ struct RetroReview: View {
                 Button("Add") { addSection() }
                 Button("Cancel", role: .cancel) {}
             }
+            .sheet(isPresented: $showSections) { RetroSectionManager() }
+            .onChange(of: reviewRows.count) { _, count in
+                if index > count - 1 { index = max(0, count - 1) }
+            }
         }
+    }
+
+    /// Move between sections: commit text, drop the keyboard so the transition
+    /// isn't fighting an active editor, then step.
+    private func step(to newIndex: Int) {
+        save()
+        editorFocused = false
+        withAnimation { index = min(max(newIndex, 0), max(0, reviewRows.count - 1)) }
     }
 
     @ViewBuilder
     private func page(row: RetroRow) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("\(index + 1) of \(reviewRows.count)")
+            Text("\(clampedIndex + 1) of \(reviewRows.count)")
                 .font(.caption).foregroundStyle(.secondary)
             Text(row.name).font(.title2.weight(.semibold))
             TextEditor(text: binding(for: row))
                 .font(.body)
+                .focused($editorFocused)
                 .padding(8)
                 .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
                 .frame(maxHeight: .infinity)
@@ -72,13 +99,13 @@ struct RetroReview: View {
     private var controls: some View {
         HStack {
             Button {
-                save(); withAnimation { index = max(0, index - 1) }
+                step(to: clampedIndex - 1)
             } label: { Label("Previous", systemImage: "chevron.left") }
-                .disabled(index == 0)
+                .disabled(clampedIndex == 0)
             Spacer()
-            if index < reviewRows.count - 1 {
+            if clampedIndex < reviewRows.count - 1 {
                 Button {
-                    save(); withAnimation { index += 1 }
+                    step(to: clampedIndex + 1)
                 } label: { Label("Next", systemImage: "chevron.right").labelStyle(.titleAndIcon) }
                     .buttonStyle(.borderedProminent)
             } else {

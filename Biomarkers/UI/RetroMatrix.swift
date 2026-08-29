@@ -15,6 +15,7 @@ struct RetroMatrix: View {
     @State private var showAddRow = false
     @State private var newName = ""
     @State private var review: ReviewTarget?
+    @State private var showSections = false
 
     struct ReviewTarget: Identifiable { let id: String }
 
@@ -43,6 +44,9 @@ struct RetroMatrix: View {
                     } label: {
                         Label("Review a specific period", systemImage: "calendar")
                     }
+                }
+                Button { showSections = true } label: {
+                    Label("Manage sections", systemImage: "slider.horizontal.3")
                 }
             }
 
@@ -109,6 +113,7 @@ struct RetroMatrix: View {
         }
         .navigationTitle(Text("Retro"))
         .sheet(item: $review) { target in RetroReview(columnId: target.id) }
+        .sheet(isPresented: $showSections) { RetroSectionManager() }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button { showImport = true } label: { Image(systemName: "square.and.arrow.down") }
