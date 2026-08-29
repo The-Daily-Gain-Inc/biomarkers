@@ -339,22 +339,23 @@ final class DashboardModel: ObservableObject {
         let client = GarminClient(session: garmin)
         let today = Calendar.current.startOfDay(for: Date())
 
+        let fitAgeKeys = ["fitnessAge", "currentFitnessAge", "achievableFitnessAge"]
         for day in days {
             // Skip network for fully-cached past days; today always refreshes.
             let past = day < today
-            if past, isCached(context, day: day, key: "steps") { continue }
-            guard let summary = try? await client.dailySummary(date: day) else { continue }
-            if let v = (summary["totalSteps"] as? NSNumber)?.doubleValue {
+            let needSteps = !(past && isCached(context, day: day, key: "steps"))
+            let needFitAge = !(past && isCached(context, day: day, key: "fit_age"))
+            if !needSteps && !needFitAge { continue }
+            if needSteps, let summary = try? await client.dailySummary(date: day),
+               let v = (summary["totalSteps"] as? NSNumber)?.doubleValue {
                 upsert(context, day: day, key: "steps", value: v)
             }
-            // Stress comes from Oura only (Garmin's 0–100 level is not used).
-        }
-
-        if let fa = try? await client.fitnessAge(date: Date()) {
-            let candidates = ["fitnessAge", "currentFitnessAge", "achievableFitnessAge"]
-            if let v = candidates.compactMap({ (fa[$0] as? NSNumber)?.doubleValue }).first {
-                upsert(context, day: today, key: "fit_age", value: v)
+            // Fitness age per day, so it has a Trends history too.
+            if needFitAge, let fa = try? await client.fitnessAge(date: day),
+               let v = fitAgeKeys.compactMap({ (fa[$0] as? NSNumber)?.doubleValue }).first {
+                upsert(context, day: day, key: "fit_age", value: v)
             }
+            // Stress comes from Oura only (Garmin's 0–100 level is not used).
         }
         if let sync = try? await client.lastDeviceSync() { Self.setSynced("garmin", sync) }
         if let battery = try? await client.deviceBattery() {
@@ -471,9 +472,13 @@ final class DashboardModel: ObservableObject {
             for r in rows { if let d = day(from: r), let v = (r["vo2_max"] as? NSNumber)?.doubleValue, v > 0 { upsert(context, day: d, key: "vo2", value: v) } }
         }
         if let rows = try? await client.dailyCollection("daily_cardiovascular_age", start: windowStart, end: qEnd),
-           let vascular = rows.compactMap({ ($0["vascular_age"] as? NSNumber)?.doubleValue }).last {
-            if let info = try? await client.personalInfo(), let age = (info["age"] as? NSNumber)?.doubleValue {
-                upsert(context, day: todayStart, key: "years", value: age - vascular)
+           let info = try? await client.personalInfo(), let age = (info["age"] as? NSNumber)?.doubleValue {
+            // One point per day, so Years Younger has a Trends history — not just
+            // today's value from the last row.
+            for r in rows {
+                if let d = day(from: r), let vascular = (r["vascular_age"] as? NSNumber)?.doubleValue {
+                    upsert(context, day: d, key: "years", value: age - vascular)
+                }
             }
         }
         // All-day HR is the most granular "ring last uploaded" signal. Probe a
