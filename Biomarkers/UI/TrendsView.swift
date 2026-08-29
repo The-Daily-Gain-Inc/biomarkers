@@ -60,6 +60,9 @@ struct TrendsView: View {
 
                 summary(values: values)
                     .padding()
+
+                ZoneSectionsView(mode: .history)
+                    .padding(.bottom)
             }
             .navigationTitle(Text("Trends"))
             .toolbar {

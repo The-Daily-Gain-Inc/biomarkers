@@ -9,6 +9,7 @@ struct BiomarkersApp: App {
     @StateObject private var renphoSession = RenphoSession()
     @StateObject private var sync = SyncEngine()
     @StateObject private var zones = ZoneStore()
+    @StateObject private var zoneAgg = ZoneAggregator()
     @StateObject private var cloud = CloudSync()
 
     init() {
@@ -23,6 +24,7 @@ struct BiomarkersApp: App {
                 .environmentObject(renphoSession)
                 .environmentObject(sync)
                 .environmentObject(zones)
+                .environmentObject(zoneAgg)
                 .environmentObject(cloud)
         }
         .modelContainer(for: [

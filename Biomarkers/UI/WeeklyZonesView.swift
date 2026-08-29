@@ -2,43 +2,34 @@ import SwiftUI
 import SwiftData
 import Charts
 
-/// Weekly HR-zone rollup from cached Garmin activities — the thing neither
-/// Garmin Connect nor Oura will show. ISO weeks (Monday start).
-struct WeeklyZonesView: View {
-    @EnvironmentObject var session: SessionStore
-    @EnvironmentObject var sync: SyncEngine
+/// Which subset of the HR-zone visuals to render. The Zones tab was retired and
+/// its content split: `.daily` lives in the Dashboard, `.history` in Trends.
+enum ZonesMode { case daily, history }
+
+/// Embeddable HR-zone rollup from cached Garmin activities. Renders as card
+/// sections so it drops into the Dashboard / Trends ScrollViews. All bucketing
+/// is shared through ZoneAggregator, so it's computed once across both hosts.
+struct ZoneSectionsView: View {
+    let mode: ZonesMode
+
     @EnvironmentObject var zones: ZoneStore
-    @Environment(\.modelContext) private var context
+    @EnvironmentObject var agg: ZoneAggregator
     @Environment(\.colorScheme) private var scheme
-    @AppStorage("backfillMonths") private var backfillMonths = 6
     @Query(sort: \CachedActivity.startDate, order: .reverse) private var activities: [CachedActivity]
     @Query private var sleepMetrics: [DailyMetric]
     @State private var weekOffset = 0
     @State private var selectedDay = Calendar.current.startOfDay(for: Date())
 
-    /// Per-activity bucketed zone seconds, computed once per (activities, Max HR)
-    /// change off the main thread. Every chart sums this instead of re-walking
-    /// each activity's HR samples on every body pass.
-    @State private var zoneCache: [Int: [Double]] = [:]
-    @State private var cacheKey = ""
-
-    /// Signature of the inputs the cache depends on: Max HR, activity count,
-    /// and total HR samples (so a backfill of raw HR re-triggers the rebuild).
     private var cacheSignature: String {
-        let samples = activities.reduce(0) { $0 + $1.hrBpm.count }
-        return "\(zones.maxHR)-\(activities.count)-\(samples)"
+        ZoneAggregator.signature(activities: activities, maxHR: zones.maxHR)
     }
 
-    /// Bucketed zone seconds for one activity, from the cache (falls back to
-    /// Garmin's split until the cache is built).
-    private func zoneSecs(_ a: CachedActivity) -> [Double] {
-        zoneCache[a.activityId] ?? a.fiveZoneSeconds
-    }
+    private func zoneSecs(_ a: CachedActivity) -> [Double] { agg.zoneSecs(a) }
 
-    /// True once the heavy per-activity bucketing has produced results.
-    private var cacheReady: Bool { !zoneCache.isEmpty || activities.isEmpty }
+    private var cacheReady: Bool { agg.isReady || activities.isEmpty }
 
-    /// HR-zone seconds for the selected day.
+    // MARK: - Derived data
+
     private var selectedDayZones: [Double] {
         let cal = Calendar.current
         return activities.filter { cal.isDate($0.startDate, inSameDayAs: selectedDay) }
@@ -47,7 +38,6 @@ struct WeeklyZonesView: View {
             }
     }
 
-    /// Sleep-stage minutes (deep, light, rem, awake) for the selected day.
     private func sleepMinutes(for day: Date) -> [Double] {
         let cal = Calendar.current
         return SleepPalette.keys.map { key in
@@ -55,7 +45,6 @@ struct WeeklyZonesView: View {
         }
     }
 
-    /// Per-night sleep-stage minutes for the trailing 7 days.
     private var weeklySleep: [(date: Date, minutes: [Double])] {
         last7Days.map { ($0, sleepMinutes(for: $0)) }
     }
@@ -65,8 +54,7 @@ struct WeeklyZonesView: View {
     }
 
     /// The sleep to show for the selected day. Sleep is dated to the morning
-    /// you woke, so "today" is last night. If the selected day has no sleep
-    /// (e.g. today's not synced yet), fall back to the most recent night.
+    /// you woke, so "today" is last night. Falls back to the most recent night.
     private var displayedSleep: (day: Date, minutes: [Double]) {
         let m = sleepMinutes(for: selectedDay)
         if m.reduce(0, +) > 0 { return (selectedDay, m) }
@@ -75,7 +63,6 @@ struct WeeklyZonesView: View {
         }
         return (selectedDay, m)
     }
-
 
     private var calendar: Calendar {
         var cal = Calendar(identifier: .iso8601)
@@ -104,8 +91,6 @@ struct WeeklyZonesView: View {
         return (0..<7).map { cal.date(byAdding: .day, value: -6 + $0, to: today)! }
     }
 
-    /// Total seconds in each zone across every cached activity (all time),
-    /// computed against the custom bounds.
     private var allTimeZoneTotals: [Double] {
         activities.reduce(into: [Double](repeating: 0, count: 5)) { acc, a in
             for (i, s) in zoneSecs(a).enumerated() { acc[i] += s }
@@ -123,8 +108,6 @@ struct WeeklyZonesView: View {
         return min(max(weeks, 12), 260)
     }
 
-    /// Per-week zone seconds over the trend window (oldest first), so the
-    /// stacked trend shows how the zone mix shifts over time.
     private var weeklyZoneTrend: [(weekStart: Date, zones: [Double])] {
         let cal = calendar
         let thisWeekStart = weekInterval.start
@@ -139,7 +122,6 @@ struct WeeklyZonesView: View {
         }
     }
 
-    /// Per-day zone seconds for the trailing 7 days (index 0 = oldest).
     private var dailyZoneSeconds: [(date: Date, zones: [Double])] {
         let cal = Calendar.current
         return last7Days.map { day in
@@ -151,137 +133,105 @@ struct WeeklyZonesView: View {
         }
     }
 
+    // MARK: - Body
+
     var body: some View {
-        NavigationStack {
-            Group {
-                if cacheReady {
-                    content
-                } else {
-                    VStack(spacing: 12) {
+        VStack(spacing: 14) {
+            if !cacheReady {
+                card("Heart Rate Zones") {
+                    HStack(spacing: 10) {
                         ProgressView()
-                        Text("Crunching your zones…")
-                            .font(.footnote).foregroundStyle(.secondary)
+                        Text("Crunching your zones…").font(.footnote).foregroundStyle(.secondary)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(maxWidth: .infinity).padding(.vertical, 12)
                 }
+            } else if mode == .daily {
+                dailyCards
+            } else {
+                historyCards
             }
-            .navigationTitle(Text("Zones"))
-            .task(id: cacheSignature) { await buildCache() }
+        }
+        .padding(.horizontal)
+        .task(id: cacheSignature) {
+            await agg.rebuild(signature: cacheSignature, activities: activities, floors: zones.floors)
         }
     }
 
-    private var content: some View {
-        List {
-                Section {
-                    dayNavigator
-                    Text("Heart Rate Zones").font(.caption).foregroundStyle(.secondary)
-                        .listRowSeparator(.hidden)
-                    if selectedDayZones.reduce(0, +) > 0 {
-                        zoneBarChart(selectedDayZones).listRowSeparator(.hidden)
-                    } else {
-                        Text("No workout that day").font(.footnote).foregroundStyle(.secondary)
-                    }
-                    HStack {
-                        Text("Sleep Stages").font(.caption).foregroundStyle(.secondary)
-                        Spacer()
-                        if displayedSleep.minutes.reduce(0, +) > 0 {
-                            Text(Calendar.current.isDateInToday(selectedDay)
-                                 ? "night of \(displayedSleep.day.formatted(.dateTime.month(.abbreviated).day()))"
-                                 : "")
-                                .font(.caption2).foregroundStyle(.tertiary)
-                        }
-                    }
-                    .listRowSeparator(.hidden)
-                    if displayedSleep.minutes.reduce(0, +) > 0 {
-                        sleepBarChart(displayedSleep.minutes).listRowSeparator(.hidden)
-                        sleepLegend.listRowSeparator(.hidden)
-                    } else {
-                        Text("No sleep data that night").font(.footnote).foregroundStyle(.secondary)
-                    }
-                } header: {
-                    Text("By Day")
-                }
-                Section {
-                    dailyChart.listRowSeparator(.hidden)
-                    zoneLegend.listRowSeparator(.hidden)
-                } header: {
-                    Text("HR Zones — Last 7 Days")
-                }
-                Section {
-                    zonePieChart.listRowSeparator(.hidden)
-                } header: {
-                    Text("Zone Breakdown — All Time")
-                }
-                Section {
-                    zoneTrendChart.listRowSeparator(.hidden)
-                    zoneLegend.listRowSeparator(.hidden)
-                    zoneTrendTable.listRowSeparator(.hidden)
-                } header: {
-                    Text("Zone Trend — \(trendWeeks) Weeks")
-                }
-                Section {
-                    weeklySleepChart.listRowSeparator(.hidden)
-                    sleepLegend.listRowSeparator(.hidden)
-                } header: {
-                    Text("Sleep — Last 7 Nights")
-                }
-                Section {
-                    weekPicker
-                    zoneBarChart(zoneTotals).listRowSeparator(.hidden)
-                } header: {
-                    Text("Time in Zone (Week)")
-                }
-                Section {
-                    if weekActivities.isEmpty {
-                        Text("No activities this week").foregroundStyle(.secondary)
-                    }
-                    ForEach(weekActivities) { activity in
-                        ActivityRow(activity: activity, floors: zones.floors)
-                    }
-                } header: {
-                    Text("Activities")
-                }
-            }
-            .listStyle(.insetGrouped)
-            .refreshable {
-                await sync.sync(context: context, session: session, backfillMonths: backfillMonths)
-            }
-    }
-
-    /// Rebuild the per-activity zone cache off the main thread when inputs
-    /// change, so the charts never re-walk HR samples during rendering.
-    private func buildCache() async {
-        guard cacheKey != cacheSignature else { return }
-        let floors = zones.floors
-        let snaps: [(Int, [Int], [Double], [Double])] =
-            activities.map { ($0.activityId, $0.hrBpm, $0.hrElapsed, $0.fiveZoneSeconds) }
-        let result = await Task.detached(priority: .userInitiated) { () -> [Int: [Double]] in
-            var dict = [Int: [Double]](minimumCapacity: snaps.count)
-            for s in snaps {
-                dict[s.0] = Self.bucket(bpm: s.1, elapsed: s.2, floors: floors, fallback: s.3)
-            }
-            return dict
-        }.value
-        zoneCache = result
-        cacheKey = cacheSignature
-    }
-
-    /// Time-in-zone from a raw HR series against `floors`; mirrors
-    /// CachedActivity.zoneSeconds(floors:) but runs on a Sendable snapshot.
-    nonisolated static func bucket(bpm: [Int], elapsed: [Double],
-                                   floors: [Int], fallback: [Double]) -> [Double] {
-        guard !bpm.isEmpty, floors.count == 5 else { return fallback }
-        var out = [Double](repeating: 0, count: 5)
-        for i in bpm.indices {
-            let hr = bpm[i]
-            guard hr >= floors[0] else { continue }
-            var zone = 0
-            for z in 0..<5 where hr >= floors[z] { zone = z }
-            let dwell = i + 1 < elapsed.count ? min(max(elapsed[i + 1] - elapsed[i], 0), 120) : 1
-            out[zone] += dwell
+    /// A rounded card matching the grouped-list look, so the charts read the
+    /// same as they did in the old Zones tab.
+    private func card<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.headline)
+            content()
         }
-        return out
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
     }
+
+    // MARK: - Daily (Dashboard)
+
+    @ViewBuilder private var dailyCards: some View {
+        card("Heart Rate Zones — By Day") {
+            dayNavigator
+            Text("Heart Rate Zones").font(.caption).foregroundStyle(.secondary)
+            if selectedDayZones.reduce(0, +) > 0 {
+                zoneBarChart(selectedDayZones)
+            } else {
+                Text("No workout that day").font(.footnote).foregroundStyle(.secondary)
+            }
+            HStack {
+                Text("Sleep Stages").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if displayedSleep.minutes.reduce(0, +) > 0 {
+                    Text(Calendar.current.isDateInToday(selectedDay)
+                         ? "night of \(displayedSleep.day.formatted(.dateTime.month(.abbreviated).day()))"
+                         : "")
+                        .font(.caption2).foregroundStyle(.tertiary)
+                }
+            }
+            if displayedSleep.minutes.reduce(0, +) > 0 {
+                sleepBarChart(displayedSleep.minutes)
+                sleepLegend
+            } else {
+                Text("No sleep data that night").font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        card("Time in Zone (Week)") {
+            weekPicker
+            zoneBarChart(zoneTotals)
+        }
+        card("Activities") {
+            if weekActivities.isEmpty {
+                Text("No activities this week").foregroundStyle(.secondary)
+            }
+            ForEach(weekActivities) { activity in
+                ActivityRow(activity: activity, floors: zones.floors)
+                if activity.id != weekActivities.last?.id { Divider() }
+            }
+        }
+    }
+
+    // MARK: - History (Trends)
+
+    @ViewBuilder private var historyCards: some View {
+        card("Zone Breakdown — All Time") { zonePieChart }
+        card("Zone Trend — \(trendWeeks) Weeks") {
+            zoneTrendChart
+            zoneLegend
+            zoneTrendTable
+        }
+        card("HR Zones — Last 7 Days") {
+            dailyChart
+            zoneLegend
+        }
+        card("Sleep — Last 7 Nights") {
+            weeklySleepChart
+            sleepLegend
+        }
+    }
+
+    // MARK: - Pieces
 
     private var dayNavigator: some View {
         let cal = Calendar.current
@@ -360,8 +310,7 @@ struct WeeklyZonesView: View {
         .frame(height: 150).padding(.vertical, 4)
     }
 
-    /// Stacked minutes-per-zone per week over the trend window, so the shifting
-    /// zone mix (how much time in each zone) reads at a glance.
+    /// Stacked minutes-per-zone per week over the trend window.
     private var zoneTrendChart: some View {
         let data = weeklyZoneTrend
         let hasData = data.contains { $0.zones.reduce(0, +) > 0 }
@@ -378,7 +327,6 @@ struct WeeklyZonesView: View {
                                 )
                                 .foregroundStyle(ZonePalette.color(zone: zone, scheme: scheme))
                                 .annotation(position: .top) {
-                                    // Total for the week, drawn once (on the top-most zone present).
                                     if zone == topZone(week.zones) {
                                         Text("\(Int((week.zones.reduce(0, +) / 60).rounded()))")
                                             .font(.system(size: 8)).foregroundStyle(.secondary)
@@ -405,8 +353,7 @@ struct WeeklyZonesView: View {
         }
     }
 
-    /// All-time zone split as a donut, with each slice's share of total time
-    /// and a legend of minutes + percentage per zone.
+    /// All-time zone split as a donut, with a legend of minutes + percentage.
     private var zonePieChart: some View {
         let totals = allTimeZoneTotals
         let grand = totals.reduce(0, +)
@@ -456,8 +403,7 @@ struct WeeklyZonesView: View {
         (1...5).last { zones[$0 - 1] > 0 } ?? 5
     }
 
-    /// Numeric per-week breakdown: minutes in each zone plus the week total,
-    /// newest week first.
+    /// Numeric per-week breakdown: minutes in each zone plus the week total.
     private var zoneTrendTable: some View {
         let rows = weeklyZoneTrend.reversed().filter { $0.zones.reduce(0, +) > 0 }
         return VStack(spacing: 0) {
@@ -535,9 +481,6 @@ struct WeeklyZonesView: View {
         }
     }
 
-    /// Last night's sleep stages as a horizontal bar chart, mirroring the
-    /// activity zone chart.
-
     private var sleepLegend: some View {
         HStack(spacing: 14) {
             ForEach(0..<4, id: \.self) { i in
@@ -595,7 +538,6 @@ struct WeeklyZonesView: View {
                 .disabled(weekOffset >= 0)
         }
     }
-
 }
 
 struct ActivityRow: View {

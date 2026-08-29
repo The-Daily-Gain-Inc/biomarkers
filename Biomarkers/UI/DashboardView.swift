@@ -60,6 +60,8 @@ struct DashboardView: View {
                         .padding(.bottom, 10)
                     ProfileCard()
                         .padding(.horizontal)
+                        .padding(.bottom, 14)
+                    ZoneSectionsView(mode: .daily)
                 } else {
                     weekGrid
                 }

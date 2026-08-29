@@ -28,9 +28,6 @@ struct RootView: View {
             NavigationStack { RetroMatrix() }
                 .tabItem { Label("Retro", systemImage: "square.and.pencil") }
                 .tag(2)
-            WeeklyZonesView()
-                .tabItem { Label("Zones", systemImage: "heart.text.square") }
-                .tag(3)
             LifeView()
                 .tabItem { Label("Life", systemImage: "target") }
                 .tag(4)
