@@ -3,8 +3,11 @@ import SwiftData
 import Charts
 
 /// Which subset of the HR-zone visuals to render. The Zones tab was retired and
-/// its content split: `.daily` lives in the Dashboard, `.history` in Trends.
-enum ZonesMode { case daily, history }
+/// its content split across hosts:
+/// - `.daily`   → Dashboard "Today" (by-day zones + sleep, this-week, activities)
+/// - `.week`    → Dashboard "Last 7 Days" (last-7-days zones, last-7-nights sleep)
+/// - `.history` → Trends (all-time zone + sleep breakdowns and trends)
+enum ZonesMode { case daily, week, history }
 
 /// Embeddable HR-zone rollup from cached Garmin activities. Renders as card
 /// sections so it drops into the Dashboard / Trends ScrollViews. All bucketing
@@ -97,6 +100,28 @@ struct ZoneSectionsView: View {
         }
     }
 
+    /// Total minutes per sleep stage (deep, light, rem, awake) across all nights.
+    private var allTimeSleepTotals: [Double] {
+        SleepPalette.keys.map { key in
+            sleepMetrics.filter { $0.metricKey == key }.reduce(0) { $0 + $1.value }
+        }
+    }
+
+    /// Per-week sleep-stage minutes over the trend window (oldest first).
+    private var weeklySleepTrend: [(weekStart: Date, minutes: [Double])] {
+        let cal = calendar
+        let thisWeekStart = weekInterval.start
+        return (0..<trendWeeks).reversed().map { back in
+            let start = cal.date(byAdding: .weekOfYear, value: -back, to: thisWeekStart)!
+            let interval = cal.dateInterval(of: .weekOfYear, for: start)!
+            let mins = SleepPalette.keys.map { key in
+                sleepMetrics.filter { $0.metricKey == key && interval.contains($0.day) }
+                    .reduce(0) { $0 + $1.value }
+            }
+            return (interval.start, mins)
+        }
+    }
+
     /// How many ISO weeks of history to show: back to the oldest activity
     /// (capped at 5 years to stay sane), minimum 12.
     private var trendWeeks: Int {
@@ -145,10 +170,12 @@ struct ZoneSectionsView: View {
                     }
                     .frame(maxWidth: .infinity).padding(.vertical, 12)
                 }
-            } else if mode == .daily {
-                dailyCards
             } else {
-                historyCards
+                switch mode {
+                case .daily: dailyCards
+                case .week: weekCards
+                case .history: historyCards
+                }
             }
         }
         .padding(.horizontal)
@@ -212,6 +239,19 @@ struct ZoneSectionsView: View {
         }
     }
 
+    // MARK: - Last 7 (Dashboard "Last 7 Days")
+
+    @ViewBuilder private var weekCards: some View {
+        card("HR Zones — Last 7 Days") {
+            dailyChart
+            zoneLegend
+        }
+        card("Sleep — Last 7 Nights") {
+            weeklySleepChart
+            sleepLegend
+        }
+    }
+
     // MARK: - History (Trends)
 
     @ViewBuilder private var historyCards: some View {
@@ -221,12 +261,9 @@ struct ZoneSectionsView: View {
             zoneLegend
             zoneTrendTable
         }
-        card("HR Zones — Last 7 Days") {
-            dailyChart
-            zoneLegend
-        }
-        card("Sleep — Last 7 Nights") {
-            weeklySleepChart
+        card("Sleep Breakdown — All Time") { sleepDonut }
+        card("Sleep Trend — \(trendWeeks) Weeks") {
+            sleepTrendChart
             sleepLegend
         }
     }
@@ -394,6 +431,85 @@ struct ZoneSectionsView: View {
                 Text("No zone data yet")
                     .font(.footnote).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity).padding(.vertical, 24)
+            }
+        }
+    }
+
+    /// All-time sleep-stage split as a donut, with a legend of time + share
+    /// per stage — the sleep counterpart to the zone breakdown.
+    private var sleepDonut: some View {
+        let totals = allTimeSleepTotals
+        let grand = totals.reduce(0, +)
+        return Group {
+            if grand > 0 {
+                Chart(Array(totals.enumerated()), id: \.offset) { item in
+                    SectorMark(
+                        angle: .value("Minutes", item.element),
+                        innerRadius: .ratio(0.55),
+                        angularInset: 1.5
+                    )
+                    .cornerRadius(3)
+                    .foregroundStyle(SleepPalette.color(index: item.offset, scheme: scheme))
+                }
+                .frame(height: 200)
+                .padding(.vertical, 4)
+
+                VStack(spacing: 6) {
+                    ForEach(Array(totals.enumerated()), id: \.offset) { item in
+                        let pct = item.element / grand * 100
+                        HStack(spacing: 8) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(SleepPalette.color(index: item.offset, scheme: scheme))
+                                .frame(width: 10, height: 10)
+                            Text(SleepPalette.labels[item.offset]).font(.caption)
+                            Spacer()
+                            Text(formatDuration(item.element * 60))
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text("\(Int(pct.rounded()))%")
+                                .font(.caption.weight(.semibold))
+                                .frame(width: 40, alignment: .trailing)
+                        }
+                    }
+                }
+            } else {
+                Text("No sleep data yet")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity).padding(.vertical, 24)
+            }
+        }
+    }
+
+    /// Stacked sleep-stage minutes per week over the trend window.
+    private var sleepTrendChart: some View {
+        let data = weeklySleepTrend
+        let hasData = data.contains { $0.minutes.reduce(0, +) > 0 }
+        return Group {
+            if hasData {
+                Chart {
+                    ForEach(Array(data.enumerated()), id: \.offset) { _, week in
+                        ForEach(0..<4, id: \.self) { stage in
+                            if week.minutes[stage] > 0 {
+                                BarMark(
+                                    x: .value("Week", week.weekStart, unit: .weekOfYear),
+                                    y: .value("Minutes", week.minutes[stage])
+                                )
+                                .foregroundStyle(SleepPalette.color(index: stage, scheme: scheme))
+                            }
+                        }
+                    }
+                }
+                .chartXAxis {
+                    AxisMarks(values: .stride(by: .weekOfYear, count: max(1, trendWeeks / 8))) { _ in
+                        AxisValueLabel(format: .dateTime.month(.abbreviated).day())
+                    }
+                }
+                .frame(height: 190)
+                .padding(.vertical, 4)
+            } else {
+                Text("No sleep data yet")
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 24)
             }
         }
     }

@@ -64,6 +64,8 @@ struct DashboardView: View {
                     ZoneSectionsView(mode: .daily)
                 } else {
                     weekGrid
+                    ZoneSectionsView(mode: .week)
+                        .padding(.top, 4)
                 }
             }
             .swipeSegments($mode)
