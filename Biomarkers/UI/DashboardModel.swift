@@ -409,6 +409,11 @@ final class DashboardModel: ObservableObject {
         guard oura.isConnected else { return }
         let client = OuraClient(session: oura)
         let end = Date()
+        // Track the newest real datapoint across *every* collection, so the
+        // "last Oura data" reflects last night's sleep even when all-day HR
+        // hasn't uploaded yet.
+        var newest: Date?
+        func note(_ d: Date?) { if let d, d > (newest ?? .distantPast) { newest = d } }
 
         if let rows = try? await client.dailyCollection("daily_sleep", start: windowStart, end: end) {
             for r in rows where day(from: r) != nil {
@@ -427,6 +432,7 @@ final class DashboardModel: ObservableObject {
         }
         if let rows = try? await client.dailyCollection("sleep", start: windowStart, end: end) {
             for r in rows where (r["type"] as? String) == "long_sleep" {
+                note(Self.preciseDate(from: r, key: "bedtime_end"))
                 // Date by the morning you woke (bedtime_end), so HRV/RHR/sleep
                 // align with sleep_score/readiness instead of lagging a day.
                 guard let d = wakeDay(from: r) ?? day(from: r) else { continue }
@@ -462,10 +468,29 @@ final class DashboardModel: ObservableObject {
                 upsert(context, day: todayStart, key: "years", value: age - vascular)
             }
         }
-        // Latest heart-rate sample time ≈ when the ring last synced.
-        if let samples = try? await client.heartRate(start: Calendar.current.date(byAdding: .day, value: -2, to: end)!, end: end),
-           let latest = samples.compactMap({ $0.date }).max() {
-            Self.setSynced("oura", latest)
+        // All-day HR is the most granular "ring last uploaded" signal. Probe a
+        // few days back (cheap enough) and fold into `newest`.
+        let hrStart = Calendar.current.date(byAdding: .day, value: -4, to: end)!
+        if let samples = try? await client.heartRate(start: hrStart, end: end) {
+            note(samples.compactMap { $0.date }.max())
         }
+        // Only ever advance the marker — never rewrite it older on a partial pull.
+        if let newest {
+            DebugLog.shared.add("oura newest data \(newest.formatted(.dateTime.month().day().hour().minute()))")
+            let prev = UserDefaults.standard.double(forKey: "lastUpdate.oura")
+            if newest.timeIntervalSince1970 > prev { Self.setSynced("oura", newest) }
+        } else {
+            DebugLog.shared.add("oura: no data returned in window")
+        }
+    }
+
+    /// Parse a full ISO-8601 datetime (with or without fractional seconds).
+    static func preciseDate(from row: [String: Any], key: String) -> Date? {
+        guard let s = row[key] as? String else { return nil }
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f.date(from: s) { return d }
+        f.formatOptions = [.withInternetDateTime]
+        return f.date(from: s)
     }
 }
