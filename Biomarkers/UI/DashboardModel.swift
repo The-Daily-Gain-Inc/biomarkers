@@ -409,30 +409,38 @@ final class DashboardModel: ObservableObject {
         guard oura.isConnected else { return }
         let client = OuraClient(session: oura)
         let end = Date()
+        // Query through *tomorrow* so an inclusive/exclusive end_date boundary
+        // can never clip today's freshly-synced records.
+        let qEnd = Calendar.current.date(byAdding: .day, value: 1, to: end)!
         // Track the newest real datapoint across *every* collection, so the
         // "last Oura data" reflects last night's sleep even when all-day HR
         // hasn't uploaded yet.
         var newest: Date?
         func note(_ d: Date?) { if let d, d > (newest ?? .distantPast) { newest = d } }
+        var sleepCount = 0, sleepLatest: Date?
+        var hrCount = 0, hrLatest: Date?
 
-        if let rows = try? await client.dailyCollection("daily_sleep", start: windowStart, end: end) {
+        if let rows = try? await client.dailyCollection("daily_sleep", start: windowStart, end: qEnd) {
             for r in rows where day(from: r) != nil {
                 if let s = (r["score"] as? NSNumber)?.doubleValue { upsert(context, day: day(from: r)!, key: "sleep_score", value: s) }
             }
         }
-        if let rows = try? await client.dailyCollection("daily_readiness", start: windowStart, end: end) {
+        if let rows = try? await client.dailyCollection("daily_readiness", start: windowStart, end: qEnd) {
             for r in rows { if let d = day(from: r), let s = (r["score"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "readiness", value: s) } }
         }
-        if let rows = try? await client.dailyCollection("daily_resilience", start: windowStart, end: end) {
+        if let rows = try? await client.dailyCollection("daily_resilience", start: windowStart, end: qEnd) {
             for r in rows {
                 if let d = day(from: r), let lvl = r["level"] as? String, let s = Self.resilienceScore(lvl) {
                     upsert(context, day: d, key: "resilience", value: s)
                 }
             }
         }
-        if let rows = try? await client.dailyCollection("sleep", start: windowStart, end: end) {
+        if let rows = try? await client.dailyCollection("sleep", start: windowStart, end: qEnd) {
             for r in rows where (r["type"] as? String) == "long_sleep" {
-                note(Self.preciseDate(from: r, key: "bedtime_end"))
+                sleepCount += 1
+                let e = Self.preciseDate(from: r, key: "bedtime_end")
+                if let e, e > (sleepLatest ?? .distantPast) { sleepLatest = e }
+                note(e)
                 // Date by the morning you woke (bedtime_end), so HRV/RHR/sleep
                 // align with sleep_score/readiness instead of lagging a day.
                 guard let d = wakeDay(from: r) ?? day(from: r) else { continue }
@@ -446,23 +454,23 @@ final class DashboardModel: ObservableObject {
                 if let v = (r["awake_time"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "sleep_awake", value: v / 60) }
             }
         }
-        if let rows = try? await client.dailyCollection("daily_activity", start: windowStart, end: end) {
+        if let rows = try? await client.dailyCollection("daily_activity", start: windowStart, end: qEnd) {
             for r in rows { if let d = day(from: r), let s = (r["score"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "o_activity", value: s) } }
         }
-        if let rows = try? await client.dailyCollection("daily_stress", start: windowStart, end: end) {
+        if let rows = try? await client.dailyCollection("daily_stress", start: windowStart, end: qEnd) {
             for r in rows { if let d = day(from: r), let v = (r["stress_high"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "o_stress", value: v / 3600) } }
         }
-        if let rows = try? await client.dailyCollection("daily_spo2", start: windowStart, end: end) {
+        if let rows = try? await client.dailyCollection("daily_spo2", start: windowStart, end: qEnd) {
             for r in rows {
                 if let d = day(from: r), let v = ((r["spo2_percentage"] as? [String: Any])?["average"] as? NSNumber)?.doubleValue {
                     upsert(context, day: d, key: "spo2", value: v)
                 }
             }
         }
-        if let rows = try? await client.dailyCollection("vO2_max", start: windowStart, end: end) {
+        if let rows = try? await client.dailyCollection("vO2_max", start: windowStart, end: qEnd) {
             for r in rows { if let d = day(from: r), let v = (r["vo2_max"] as? NSNumber)?.doubleValue, v > 0 { upsert(context, day: d, key: "vo2", value: v) } }
         }
-        if let rows = try? await client.dailyCollection("daily_cardiovascular_age", start: windowStart, end: end),
+        if let rows = try? await client.dailyCollection("daily_cardiovascular_age", start: windowStart, end: qEnd),
            let vascular = rows.compactMap({ ($0["vascular_age"] as? NSNumber)?.doubleValue }).last {
             if let info = try? await client.personalInfo(), let age = (info["age"] as? NSNumber)?.doubleValue {
                 upsert(context, day: todayStart, key: "years", value: age - vascular)
@@ -471,16 +479,19 @@ final class DashboardModel: ObservableObject {
         // All-day HR is the most granular "ring last uploaded" signal. Probe a
         // few days back (cheap enough) and fold into `newest`.
         let hrStart = Calendar.current.date(byAdding: .day, value: -4, to: end)!
-        if let samples = try? await client.heartRate(start: hrStart, end: end) {
-            note(samples.compactMap { $0.date }.max())
+        if let samples = try? await client.heartRate(start: hrStart, end: qEnd) {
+            hrCount = samples.count
+            hrLatest = samples.compactMap { $0.date }.max()
+            note(hrLatest)
         }
+        // Per-source diagnostics: distinguishes "Oura cloud is stale" from "we
+        // clipped/failed a fetch". Shows the latest sleep-end and HR times.
+        func stamp(_ d: Date?) -> String { d.map { $0.formatted(.dateTime.month().day().hour().minute()) } ?? "—" }
+        DebugLog.shared.add("oura sleep=\(sleepCount) latest=\(stamp(sleepLatest)) | hr=\(hrCount) latest=\(stamp(hrLatest))")
         // Only ever advance the marker — never rewrite it older on a partial pull.
         if let newest {
-            DebugLog.shared.add("oura newest data \(newest.formatted(.dateTime.month().day().hour().minute()))")
             let prev = UserDefaults.standard.double(forKey: "lastUpdate.oura")
             if newest.timeIntervalSince1970 > prev { Self.setSynced("oura", newest) }
-        } else {
-            DebugLog.shared.add("oura: no data returned in window")
         }
     }
 
