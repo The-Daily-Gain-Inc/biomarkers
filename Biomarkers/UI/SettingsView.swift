@@ -33,6 +33,8 @@ struct SettingsView: View {
     @State private var renphoPassword = ""
     @State private var renphoBusy = false
     @State private var cachedCount = 0
+    @State private var ouraSyncing = false
+    @StateObject private var syncModel = DashboardModel()
     @EnvironmentObject private var zones: ZoneStore
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var log = DebugLog.shared
@@ -164,6 +166,24 @@ struct SettingsView: View {
                     if ouraSession.isConnected {
                         Label("Connected", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
+                        Button {
+                            ouraSyncing = true
+                            Task {
+                                await syncModel.syncOuraNow(context: context, oura: ouraSession)
+                                ouraSyncing = false
+                            }
+                        } label: {
+                            if ouraSyncing {
+                                HStack { ProgressView(); Text("Syncing Oura…") }
+                            } else {
+                                Label("Sync Oura Now", systemImage: "arrow.clockwise")
+                            }
+                        }
+                        .disabled(ouraSyncing)
+                        if let ts = UserDefaults.standard.object(forKey: "lastUpdate.oura") as? Double, ts > 0 {
+                            Text("Last Oura data: \(Date(timeIntervalSince1970: ts).formatted(.relative(presentation: .named)))")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         Button("Disconnect", role: .destructive) { ouraSession.disconnect() }
                     } else {
                         Button("Connect with Oura") { showOuraLogin = true }

@@ -245,6 +245,21 @@ final class DashboardModel: ObservableObject {
         Self.markSynced()
     }
 
+    /// Force a fresh Oura pull over a wider window, ignoring the freshness
+    /// gate — for the "Sync Oura Now" button when the ring lagged.
+    func syncOuraNow(context: ModelContext, oura: OuraSession, days: Int = 14) async {
+        guard !isLoading else { return }
+        isLoading = true
+        defer { isLoading = false }
+        let cal = Calendar.current
+        let todayStart = cal.startOfDay(for: Date())
+        let windowStart = cal.date(byAdding: .day, value: -(days - 1), to: todayStart)!
+        loadIndex(context)
+        await loadOura(context: context, oura: oura, windowStart: windowStart, todayStart: todayStart)
+        try? context.save()
+        Self.markSynced()
+    }
+
     // MARK: - Cache read
 
     private func renderFromCache(context: ModelContext, days: [Date]) {
