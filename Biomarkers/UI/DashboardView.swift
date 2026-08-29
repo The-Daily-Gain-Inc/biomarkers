@@ -90,7 +90,7 @@ struct DashboardView: View {
                         ProgressView()
                     } else {
                         Button {
-                            Task { await reload() }
+                            Task { await reload(force: true) }
                         } label: {
                             Label("Refresh", systemImage: "arrow.clockwise")
                         }
