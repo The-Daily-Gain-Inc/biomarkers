@@ -126,7 +126,7 @@ struct RetroReview: View {
             set: { newText in
                 let id = RetroCell.makeId(rowId: row.id, colId: columnId)
                 if let existing = cells.first(where: { $0.id == id }) {
-                    existing.text = newText
+                    existing.text = newText; existing.touch()
                 } else if !newText.isEmpty {
                     context.insert(RetroCell(rowId: row.id, colId: columnId, text: newText))
                 }

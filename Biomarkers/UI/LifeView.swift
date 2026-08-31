@@ -38,6 +38,7 @@ struct LifeView: View {
 
 struct DreamsSection: View {
     @Environment(\.modelContext) private var context
+    @EnvironmentObject private var cloud: CloudSync
     @Query(sort: \RetroDream.order) private var dreams: [RetroDream]
     @State private var editing: RetroDream?
 
@@ -62,7 +63,11 @@ struct DreamsSection: View {
                         }
                     }
                 }
-                .onDelete { idx in idx.map { dreams[$0] }.forEach(context.delete); try? context.save() }
+                .onDelete { idx in
+                    let ids = idx.map { dreams[$0].id }
+                    idx.map { dreams[$0] }.forEach(context.delete); try? context.save()
+                    Task { await cloud.softDelete(collection: "dreams", ids: ids) }
+                }
                 Button {
                     let d = RetroDream(title: "New Dream", status: "Draft", rationale: "", order: (dreams.last?.order ?? -1) + 1)
                     context.insert(d); try? context.save(); editing = d
@@ -92,7 +97,7 @@ struct DreamEditor: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { try? context.save(); cloud.requestBackup(context: context); dismiss() }
+                    Button("Done") { dream.touch(); try? context.save(); cloud.requestBackup(context: context); dismiss() }
                 }
             }
         }
@@ -117,7 +122,11 @@ struct LongevitySection: View {
                     }
                 }
             }
-            .onDelete { idx in idx.map { rules[$0] }.forEach(context.delete); try? context.save() }
+            .onDelete { idx in
+                let ids = idx.map { rules[$0].id }
+                idx.map { rules[$0] }.forEach(context.delete); try? context.save()
+                Task { await cloud.softDelete(collection: "longevityRules", ids: ids) }
+            }
             Button {
                 let r = LongevityRule(text: "New rule", order: (rules.last?.order ?? -1) + 1)
                 context.insert(r); try? context.save(); editing = r
@@ -130,7 +139,7 @@ struct LongevitySection: View {
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") { try? context.save(); cloud.requestBackup(context: context); editing = nil }
+                            Button("Done") { rule.touch(); try? context.save(); cloud.requestBackup(context: context); editing = nil }
                         }
                     }
             }

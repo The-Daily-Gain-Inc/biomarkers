@@ -8,11 +8,16 @@ final class RetroColumn {
     @Attribute(.unique) var id: String
     var label: String
     var order: Int
+    /// Last local edit — used for last-writer-wins arbitration on restore.
+    var updatedAt: Date = Date()
     init(id: String = UUID().uuidString, label: String, order: Int) {
         self.id = id
         self.label = label
         self.order = order
     }
+    func touch() { updatedAt = Date() }
+    /// Deterministic seed id so re-seeding upserts in place (never duplicates).
+    static func seedId(label: String) -> String { "seedcol:\(label)" }
 }
 
 /// A row in the retro matrix — a life domain ("Exercise", "Sleep", …).
@@ -23,12 +28,17 @@ final class RetroRow {
     var order: Int
     /// Excluded sections are hidden from the guided review (still browsable).
     var excluded: Bool = false
+    /// Last local edit — used for last-writer-wins arbitration on restore.
+    var updatedAt: Date = Date()
     init(id: String = UUID().uuidString, name: String, order: Int, excluded: Bool = false) {
         self.id = id
         self.name = name
         self.order = order
         self.excluded = excluded
     }
+    func touch() { updatedAt = Date() }
+    /// Deterministic seed id so re-seeding upserts in place (never duplicates).
+    static func seedId(name: String) -> String { "seedrow:\(name)" }
 }
 
 /// One free-text cell at a (row, column) intersection.
@@ -38,12 +48,15 @@ final class RetroCell {
     var rowId: String
     var colId: String
     var text: String
+    /// Last local edit — used for last-writer-wins arbitration on restore.
+    var updatedAt: Date = Date()
     init(rowId: String, colId: String, text: String) {
         self.id = RetroCell.makeId(rowId: rowId, colId: colId)
         self.rowId = rowId
         self.colId = colId
         self.text = text
     }
+    func touch() { updatedAt = Date() }
     static func makeId(rowId: String, colId: String) -> String { "\(rowId)|\(colId)" }
 }
 
@@ -55,6 +68,8 @@ final class RetroDream {
     var status: String
     var rationale: String
     var order: Int
+    /// Last local edit — used for last-writer-wins arbitration on restore.
+    var updatedAt: Date = Date()
     init(id: String = UUID().uuidString, title: String, status: String, rationale: String, order: Int) {
         self.id = id
         self.title = title
@@ -62,6 +77,7 @@ final class RetroDream {
         self.rationale = rationale
         self.order = order
     }
+    func touch() { updatedAt = Date() }
 }
 
 /// An editable workout block (e.g. Gym Day, Calisthenics, Skills).
@@ -71,12 +87,17 @@ final class WorkoutBlock {
     var title: String
     var content: String
     var order: Int
+    /// Last local edit — used for last-writer-wins arbitration on restore.
+    var updatedAt: Date = Date()
     init(id: String = UUID().uuidString, title: String, content: String, order: Int) {
         self.id = id
         self.title = title
         self.content = content
         self.order = order
     }
+    func touch() { updatedAt = Date() }
+    /// Deterministic seed id so re-seeding upserts in place (never duplicates).
+    static func seedId(title: String) -> String { "seedwb:\(title)" }
 }
 
 /// An editable longevity rule.
@@ -85,11 +106,14 @@ final class LongevityRule {
     @Attribute(.unique) var id: String
     var text: String
     var order: Int
+    /// Last local edit — used for last-writer-wins arbitration on restore.
+    var updatedAt: Date = Date()
     init(id: String = UUID().uuidString, text: String, order: Int) {
         self.id = id
         self.text = text
         self.order = order
     }
+    func touch() { updatedAt = Date() }
 }
 
 /// The skeleton to seed on first launch — the user's own domains and the

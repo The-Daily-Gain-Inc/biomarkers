@@ -22,6 +22,20 @@ final class CloudSync: ObservableObject {
     @Published var lastBackup: Date?
     @Published var lastError: String?
 
+    /// True only when the most recent restore actually reached Firestore (vs
+    /// failed offline). Seeding must never run on an unconfirmed restore, or a
+    /// 2nd device would clobber cloud data that simply hadn't arrived yet.
+    private(set) var restoreSucceeded = false
+    /// Whether the cloud collection was confirmed EMPTY for this account on the
+    /// last restore — the precondition for (re)seeding it from the bundle.
+    private(set) var cloudRetroWasEmpty = false
+    private(set) var cloudWorkoutsWasEmpty = false
+    private(set) var cloudDailyMetricsWasEmpty = false
+    /// Per-account migration/seed flags, loaded from users/{uid}/meta/flags.
+    /// Kept per-account (not per-device) so a 2nd device never re-forces a
+    /// migration already applied to the account.
+    private var accountFlags: [String: Bool] = [:]
+
     private var uid: String?
     private var currentNonce: String?
     private var pendingBackup: Task<Void, Never>?
@@ -86,6 +100,10 @@ final class CloudSync: ObservableObject {
                 isAnonymous = Auth.auth().currentUser?.isAnonymous ?? false
                 lastError = nil
                 await restore(context: context)
+                // Now that we're linked to a durable account, seed anything the
+                // account is genuinely missing (gated on a confirmed-empty
+                // cloud) and push local edits made before the link.
+                await seed(context: context)
                 await backup(context: context)
             } catch let error as NSError where error.code == AuthErrorCode.credentialAlreadyInUse.rawValue {
                 // This Apple ID already has an account — sign into it.
@@ -148,28 +166,9 @@ final class CloudSync: ObservableObject {
         }
     }
 
-    /// Deletes the cloud retro collections, then backs up the (clean) local
-    /// copy — used after a force-reimport, since merge-writes never delete
-    /// stale/renamed docs, which otherwise re-merge into a mess on restore.
-    func cleanRetroAndBackup(context: ModelContext) async {
-        if uid == nil { await signIn() }
-        if let root = userDoc() {
-            for name in ["retroRows", "retroColumns", "retroCells"] {
-                if let docs = try? await root.collection(name).getDocuments() {
-                    for chunk in docs.documents.chunked(into: 400) {
-                        let batch = db.batch()
-                        for d in chunk { batch.deleteDocument(d.reference) }
-                        try? await batch.commit()
-                    }
-                }
-            }
-            DebugLog.shared.add("cloud: retro collections cleared")
-        }
-        await backup(context: context)
-    }
-
-    /// Deletes specific documents from a user collection (merge-writes never
-    /// delete, so removals must be pushed explicitly or they return on restore).
+    /// Hard-deletes specific documents from a user collection (merge-writes
+    /// never delete, so removals must be pushed explicitly or they return on
+    /// restore). Used for retro, whose ids are stable and structural.
     func delete(collection name: String, ids: [String]) async {
         guard !ids.isEmpty else { return }
         if uid == nil { await signIn() }
@@ -181,10 +180,70 @@ final class CloudSync: ObservableObject {
         }
     }
 
+    /// Soft-deletes (tombstones) documents so the deletion survives a merge and
+    /// is filtered out on every device's restore — a hard delete would let the
+    /// record resurrect if another device re-pushed it before syncing.
+    func softDelete(collection name: String, ids: [String]) async {
+        guard !ids.isEmpty else { return }
+        if uid == nil { await signIn() }
+        guard let root = userDoc() else { return }
+        for chunk in ids.chunked(into: 400) {
+            let batch = db.batch()
+            for id in chunk {
+                batch.setData(["deleted": true, "updatedAt": Date()],
+                              forDocument: root.collection(name).document(id), merge: true)
+            }
+            try? await batch.commit()
+        }
+    }
+
+    // MARK: - Per-account seed/migration flags (users/{uid}/meta/flags)
+
+    /// A migration/seed already applied to this ACCOUNT. Falls back to the
+    /// legacy per-device UserDefaults flag so existing single-device installs
+    /// keep their state and never re-seed after upgrading.
+    func accountFlag(_ key: String) -> Bool {
+        accountFlags[key] ?? UserDefaults.standard.bool(forKey: key)
+    }
+
+    private func setAccountFlag(_ key: String) async {
+        accountFlags[key] = true
+        UserDefaults.standard.set(true, forKey: key)   // mirror for offline reads
+        guard let root = userDoc() else { return }
+        try? await root.collection("meta").document("flags").setData([key: true], merge: true)
+    }
+
+    // MARK: - Gated seeding
+
+    /// Seeds bundled history ONLY into collections the account is genuinely
+    /// missing: the restore must have reached Firestore, the cloud collection
+    /// must have been confirmed empty, and the per-account flag must be unset.
+    /// This makes a 2nd-device install safe — it never overwrites cloud data.
+    func seed(context: ModelContext) async {
+        let seedRetro = restoreSucceeded && cloudRetroWasEmpty && !accountFlag("retroReimportV5")
+        let seedBiomarkers = restoreSucceeded && cloudDailyMetricsWasEmpty && !accountFlag("biomarkerSeedV2")
+        let seedWorkouts = restoreSucceeded && cloudWorkoutsWasEmpty && !accountFlag("workoutSeedV1")
+
+        let result = Bootstrap.run(context: context,
+                                   seedRetro: seedRetro,
+                                   seedBiomarkers: seedBiomarkers,
+                                   seedWorkouts: seedWorkouts)
+        if result.seededRetro { await setAccountFlag("retroReimportV5") }
+        if result.seededBiomarkers { await setAccountFlag("biomarkerSeedV2") }
+        if result.seededWorkouts { await setAccountFlag("workoutSeedV1") }
+        bootstrapDone = true
+    }
+
     // MARK: - Backup (local → cloud)
 
-    func backup(context: ModelContext) async {
+    /// - Parameter isLaunch: the automatic launch backup. Suppressed for a
+    ///   brand-new anonymous session (no prior backup) so a 2nd device can't
+    ///   orphan/push its freshly-seeded data before the user links an account.
+    ///   Anonymous uids aren't recoverable after a wipe anyway, so nothing is
+    ///   lost by waiting for the link.
+    func backup(context: ModelContext, isLaunch: Bool = false) async {
         guard !isSyncing else { return }
+        if isLaunch && isAnonymous && lastBackup == nil { return }
         if uid == nil { await signIn() }
         guard let root = userDoc() else { return }
         isSyncing = true
@@ -207,22 +266,22 @@ final class CloudSync: ObservableObject {
             })
             try await push(root.collection("retroRows"),
                            (try? context.fetch(FetchDescriptor<RetroRow>())) ?? [],
-                           id: { $0.id }, data: { ["name": $0.name, "order": $0.order, "excluded": $0.excluded] })
+                           id: { $0.id }, data: { ["name": $0.name, "order": $0.order, "excluded": $0.excluded, "updatedAt": $0.updatedAt] })
             try await push(root.collection("retroColumns"),
                            (try? context.fetch(FetchDescriptor<RetroColumn>())) ?? [],
-                           id: { $0.id }, data: { ["label": $0.label, "order": $0.order] })
+                           id: { $0.id }, data: { ["label": $0.label, "order": $0.order, "updatedAt": $0.updatedAt] })
             try await push(root.collection("retroCells"),
                            (try? context.fetch(FetchDescriptor<RetroCell>())) ?? [],
-                           id: { $0.id }, data: { ["rowId": $0.rowId, "colId": $0.colId, "text": $0.text] })
+                           id: { $0.id }, data: { ["rowId": $0.rowId, "colId": $0.colId, "text": $0.text, "updatedAt": $0.updatedAt] })
             try await push(root.collection("dreams"),
                            (try? context.fetch(FetchDescriptor<RetroDream>())) ?? [],
-                           id: { $0.id }, data: { ["title": $0.title, "status": $0.status, "rationale": $0.rationale, "order": $0.order] })
+                           id: { $0.id }, data: { ["title": $0.title, "status": $0.status, "rationale": $0.rationale, "order": $0.order, "updatedAt": $0.updatedAt] })
             try await push(root.collection("longevityRules"),
                            (try? context.fetch(FetchDescriptor<LongevityRule>())) ?? [],
-                           id: { $0.id }, data: { ["text": $0.text, "order": $0.order] })
+                           id: { $0.id }, data: { ["text": $0.text, "order": $0.order, "updatedAt": $0.updatedAt] })
             try await push(root.collection("workoutBlocks"),
                            (try? context.fetch(FetchDescriptor<WorkoutBlock>())) ?? [],
-                           id: { $0.id }, data: { ["title": $0.title, "content": $0.content, "order": $0.order] })
+                           id: { $0.id }, data: { ["title": $0.title, "content": $0.content, "order": $0.order, "updatedAt": $0.updatedAt] })
 
             let ud = UserDefaults.standard
             try await root.collection("meta").document("profile").setData([
@@ -255,21 +314,36 @@ final class CloudSync: ObservableObject {
 
     func restore(context: ModelContext) async {
         defer { didRestore = true }
+        restoreSucceeded = false
         if uid == nil { await signIn() }
         guard let root = userDoc() else { return }
         do {
-            // DailyMetric
+            // Per-account seed/migration flags — load before any seeding decision.
+            if let flags = try? await root.collection("meta").document("flags").getDocument(),
+               let d = flags.data() {
+                for (k, v) in d { if let b = v as? Bool { accountFlags[k] = b } }
+            }
+            // DailyMetric — last-writer-wins on fetchedAt (never clobber a newer
+            // local edit with older cloud data).
             let existingMetrics = Dictionary((try? context.fetch(FetchDescriptor<DailyMetric>()))?.map { ($0.id, $0) } ?? [],
                                              uniquingKeysWith: { a, _ in a })
-            for doc in try await root.collection("dailyMetrics").getDocuments().documents {
+            let metricDocs = try await root.collection("dailyMetrics").getDocuments().documents
+            cloudDailyMetricsWasEmpty = metricDocs.isEmpty
+            for doc in metricDocs {
                 let d = doc.data()
                 guard let key = d["metricKey"] as? String,
                       let value = d["value"] as? Double,
                       let day = (d["day"] as? Timestamp)?.dateValue() else { continue }
-                if let m = existingMetrics[doc.documentID] { m.value = value }
-                else { context.insert(DailyMetric(day: day, metricKey: key, value: value)) }
+                let cloudAt = (d["fetchedAt"] as? Timestamp)?.dateValue()
+                if let m = existingMetrics[doc.documentID] {
+                    if let cloudAt, cloudAt > m.fetchedAt { m.value = value; m.fetchedAt = cloudAt }
+                } else {
+                    let nm = DailyMetric(day: day, metricKey: key, value: value)
+                    if let cloudAt { nm.fetchedAt = cloudAt }
+                    context.insert(nm)
+                }
             }
-            // Retro rows/columns/cells, dreams, longevity (structure the user edits)
+            // Retro rows/columns/cells, dreams, longevity, workouts.
             try await restoreRetro(root: root, context: context)
             // Profile (editable reference values)
             if let doc = try? await root.collection("meta").document("profile").getDocument(), let d = doc.data() {
@@ -283,53 +357,95 @@ final class CloudSync: ObservableObject {
                 UserDefaults.standard.set(data, forKey: "customMetrics")
             }
             try? context.save()
+            restoreSucceeded = true
         } catch {
             lastError = "Restore failed: \(error.localizedDescription)"
         }
     }
 
+    /// Returns true if the cloud doc is a tombstone; if a local record matches,
+    /// deletes it so the deletion propagates instead of resurrecting.
+    private func handleTombstone(_ d: [String: Any], id: String,
+                                 local: [String: some PersistentModel],
+                                 context: ModelContext) -> Bool {
+        guard d["deleted"] as? Bool == true else { return false }
+        if let obj = local[id] { context.delete(obj) }
+        return true
+    }
+
+    /// True when the cloud copy should overwrite the matching local record:
+    /// only when cloud's updatedAt is newer (missing cloud stamp ⇒ keep local).
+    private func cloudWins(_ d: [String: Any], localUpdatedAt: Date) -> Bool {
+        guard let cloudAt = (d["updatedAt"] as? Timestamp)?.dateValue() else { return false }
+        return cloudAt >= localUpdatedAt
+    }
+
     private func restoreRetro(root: DocumentReference, context: ModelContext) async throws {
         let rows = Dictionary((try? context.fetch(FetchDescriptor<RetroRow>()))?.map { ($0.id, $0) } ?? [], uniquingKeysWith: { a, _ in a })
-        for doc in try await root.collection("retroRows").getDocuments().documents {
+        let rowDocs = try await root.collection("retroRows").getDocuments().documents
+        for doc in rowDocs {
             let d = doc.data()
+            if handleTombstone(d, id: doc.documentID, local: rows, context: context) { continue }
             guard let name = d["name"] as? String, let order = d["order"] as? Int else { continue }
             let excluded = d["excluded"] as? Bool ?? false
-            if let r = rows[doc.documentID] { r.name = name; r.order = order; r.excluded = excluded }
+            if let r = rows[doc.documentID] {
+                if cloudWins(d, localUpdatedAt: r.updatedAt) { r.name = name; r.order = order; r.excluded = excluded; r.updatedAt = (d["updatedAt"] as? Timestamp)?.dateValue() ?? r.updatedAt }
+            }
             else { context.insert(RetroRow(id: doc.documentID, name: name, order: order, excluded: excluded)) }
         }
         let cols = Dictionary((try? context.fetch(FetchDescriptor<RetroColumn>()))?.map { ($0.id, $0) } ?? [], uniquingKeysWith: { a, _ in a })
-        for doc in try await root.collection("retroColumns").getDocuments().documents {
+        let colDocs = try await root.collection("retroColumns").getDocuments().documents
+        for doc in colDocs {
             let d = doc.data()
+            if handleTombstone(d, id: doc.documentID, local: cols, context: context) { continue }
             guard let label = d["label"] as? String, let order = d["order"] as? Int else { continue }
-            if let c = cols[doc.documentID] { c.label = label; c.order = order }
+            if let c = cols[doc.documentID] {
+                if cloudWins(d, localUpdatedAt: c.updatedAt) { c.label = label; c.order = order; c.updatedAt = (d["updatedAt"] as? Timestamp)?.dateValue() ?? c.updatedAt }
+            }
             else { context.insert(RetroColumn(id: doc.documentID, label: label, order: order)) }
         }
         let cells = Dictionary((try? context.fetch(FetchDescriptor<RetroCell>()))?.map { ($0.id, $0) } ?? [], uniquingKeysWith: { a, _ in a })
-        for doc in try await root.collection("retroCells").getDocuments().documents {
+        let cellDocs = try await root.collection("retroCells").getDocuments().documents
+        cloudRetroWasEmpty = rowDocs.isEmpty && colDocs.isEmpty && cellDocs.isEmpty
+        for doc in cellDocs {
             let d = doc.data()
+            if handleTombstone(d, id: doc.documentID, local: cells, context: context) { continue }
             guard let rowId = d["rowId"] as? String, let colId = d["colId"] as? String, let text = d["text"] as? String else { continue }
-            if let c = cells[doc.documentID] { c.text = text }
+            if let c = cells[doc.documentID] {
+                if cloudWins(d, localUpdatedAt: c.updatedAt) { c.text = text; c.updatedAt = (d["updatedAt"] as? Timestamp)?.dateValue() ?? c.updatedAt }
+            }
             else { context.insert(RetroCell(rowId: rowId, colId: colId, text: text)) }
         }
         let dreams = Dictionary((try? context.fetch(FetchDescriptor<RetroDream>()))?.map { ($0.id, $0) } ?? [], uniquingKeysWith: { a, _ in a })
         for doc in try await root.collection("dreams").getDocuments().documents {
             let d = doc.data()
+            if handleTombstone(d, id: doc.documentID, local: dreams, context: context) { continue }
             guard let title = d["title"] as? String else { continue }
-            if let x = dreams[doc.documentID] { x.title = title; x.status = d["status"] as? String ?? x.status; x.rationale = d["rationale"] as? String ?? x.rationale }
+            if let x = dreams[doc.documentID] {
+                if cloudWins(d, localUpdatedAt: x.updatedAt) { x.title = title; x.status = d["status"] as? String ?? x.status; x.rationale = d["rationale"] as? String ?? x.rationale; x.updatedAt = (d["updatedAt"] as? Timestamp)?.dateValue() ?? x.updatedAt }
+            }
             else { context.insert(RetroDream(id: doc.documentID, title: title, status: d["status"] as? String ?? "", rationale: d["rationale"] as? String ?? "", order: d["order"] as? Int ?? 0)) }
         }
         let rules = Dictionary((try? context.fetch(FetchDescriptor<LongevityRule>()))?.map { ($0.id, $0) } ?? [], uniquingKeysWith: { a, _ in a })
         for doc in try await root.collection("longevityRules").getDocuments().documents {
             let d = doc.data()
+            if handleTombstone(d, id: doc.documentID, local: rules, context: context) { continue }
             guard let text = d["text"] as? String else { continue }
-            if let x = rules[doc.documentID] { x.text = text }
+            if let x = rules[doc.documentID] {
+                if cloudWins(d, localUpdatedAt: x.updatedAt) { x.text = text; x.updatedAt = (d["updatedAt"] as? Timestamp)?.dateValue() ?? x.updatedAt }
+            }
             else { context.insert(LongevityRule(id: doc.documentID, text: text, order: d["order"] as? Int ?? 0)) }
         }
         let workouts = Dictionary((try? context.fetch(FetchDescriptor<WorkoutBlock>()))?.map { ($0.id, $0) } ?? [], uniquingKeysWith: { a, _ in a })
-        for doc in try await root.collection("workoutBlocks").getDocuments().documents {
+        let workoutDocs = try await root.collection("workoutBlocks").getDocuments().documents
+        cloudWorkoutsWasEmpty = workoutDocs.isEmpty
+        for doc in workoutDocs {
             let d = doc.data()
+            if handleTombstone(d, id: doc.documentID, local: workouts, context: context) { continue }
             guard let title = d["title"] as? String else { continue }
-            if let x = workouts[doc.documentID] { x.title = title; x.content = d["content"] as? String ?? x.content }
+            if let x = workouts[doc.documentID] {
+                if cloudWins(d, localUpdatedAt: x.updatedAt) { x.title = title; x.content = d["content"] as? String ?? x.content; x.updatedAt = (d["updatedAt"] as? Timestamp)?.dateValue() ?? x.updatedAt }
+            }
             else { context.insert(WorkoutBlock(id: doc.documentID, title: title, content: d["content"] as? String ?? "", order: d["order"] as? Int ?? 0)) }
         }
     }

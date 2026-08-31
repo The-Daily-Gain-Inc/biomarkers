@@ -93,7 +93,7 @@ struct RetroMatrix: View {
                         }
                         .contextMenu {
                             Button {
-                                row.excluded.toggle(); try? context.save(); cloud.requestBackup(context: context)
+                                row.excluded.toggle(); row.touch(); try? context.save(); cloud.requestBackup(context: context)
                             } label: {
                                 Label(row.excluded ? "Include in reviews" : "Exclude from reviews",
                                       systemImage: row.excluded ? "eye" : "eye.slash")
@@ -226,7 +226,7 @@ struct RetroDomainDetail: View {
         let id = RetroCell.makeId(rowId: row.id, colId: colId)
         let predicate = #Predicate<RetroCell> { $0.id == id }
         if let existing = try? context.fetch(FetchDescriptor(predicate: predicate)).first {
-            existing.text = text
+            existing.text = text; existing.touch()
         } else if !text.isEmpty {
             context.insert(RetroCell(rowId: row.id, colId: colId, text: text))
         }

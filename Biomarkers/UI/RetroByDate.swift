@@ -61,7 +61,7 @@ struct RetroDateView: View {
         .sheet(item: $editing) { row in
             CellEditor(title: row.name, subtitle: column?.label ?? "", text: text(for: row)) { newText in
                 let id = RetroCell.makeId(rowId: row.id, colId: columnId)
-                if let existing = cells.first(where: { $0.id == id }) { existing.text = newText }
+                if let existing = cells.first(where: { $0.id == id }) { existing.text = newText; existing.touch() }
                 else if !newText.isEmpty { context.insert(RetroCell(rowId: row.id, colId: columnId, text: newText)) }
                 try? context.save()
                 cloud.requestBackup(context: context)

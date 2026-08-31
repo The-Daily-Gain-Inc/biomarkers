@@ -21,6 +21,7 @@ struct RetroSectionManager: View {
                             get: { !row.excluded },
                             set: { on in
                                 row.excluded = !on
+                                row.touch()
                                 try? context.save()
                                 cloud.requestBackup(context: context)
                             }

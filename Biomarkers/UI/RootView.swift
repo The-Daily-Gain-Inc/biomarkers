@@ -5,6 +5,7 @@ struct RootView: View {
     @EnvironmentObject var cloud: CloudSync
     @Environment(\.modelContext) private var context
     @State private var showGarminLogin = false
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("appearance") private var appearance = "system"
 
     private var colorScheme: ColorScheme? {
@@ -46,14 +47,18 @@ struct RootView: View {
             }
         }
         .task {
-            // Merge cloud data, seed bundled history (self-healing), then back up.
+            // Merge cloud data, seed only what the account is missing, back up.
             await cloud.signIn()
             await cloud.restore(context: context)
-            let forcedRetro = Bootstrap.run(context: context)
-            cloud.bootstrapDone = true
-            if forcedRetro {
-                await cloud.cleanRetroAndBackup(context: context)
-            } else {
+            await cloud.seed(context: context)
+            await cloud.backup(context: context, isLaunch: true)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // Pull-on-foreground so multiple devices converge. Always a MERGE
+            // (keyed by stable id, timestamp-arbitrated) — never delete-all.
+            guard phase == .active, cloud.didRestore else { return }
+            Task {
+                await cloud.restore(context: context)
                 await cloud.backup(context: context)
             }
         }

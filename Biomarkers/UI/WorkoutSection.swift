@@ -25,7 +25,11 @@ struct WorkoutSection: View {
                     }
                 }
             }
-            .onDelete { idx in idx.map { blocks[$0] }.forEach(context.delete); save() }
+            .onDelete { idx in
+                let ids = idx.map { blocks[$0].id }
+                idx.map { blocks[$0] }.forEach(context.delete); save()
+                Task { await cloud.softDelete(collection: "workoutBlocks", ids: ids) }
+            }
             Section {
                 Button {
                     let b = WorkoutBlock(title: "New Block", content: "", order: (blocks.last?.order ?? -1) + 1)
@@ -47,7 +51,7 @@ struct WorkoutSection: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") { save(); editing = nil }
+                        Button("Done") { block.touch(); save(); editing = nil }
                     }
                 }
             }

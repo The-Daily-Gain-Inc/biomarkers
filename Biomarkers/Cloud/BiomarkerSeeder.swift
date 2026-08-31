@@ -5,9 +5,11 @@ import SwiftData
 /// DailyMetric (reading, meditation, porn, glucose, BP, ear age), which then
 /// auto-uploads to Firestore. Runs once; the bundle can be removed after.
 enum BiomarkerSeeder {
+    /// Gating (per-account flag + confirmed-empty cloud) is decided by
+    /// CloudSync.seed(); this just imports, keyed by DailyMetric's deterministic
+    /// id so a re-run never duplicates.
     @MainActor
-    static func seedIfNeeded(context: ModelContext) -> Bool {
-        if UserDefaults.standard.bool(forKey: "biomarkerSeedV2") { return false }
+    static func seed(context: ModelContext) -> Bool {
         guard let url = Bundle.main.url(forResource: "BiomarkerSeed", withExtension: "csv"),
               let text = try? String(contentsOf: url, encoding: .utf8) else {
             DebugLog.shared.add("seed: BiomarkerSeed.csv missing")
@@ -40,7 +42,6 @@ enum BiomarkerSeeder {
             }
         }
         try? context.save()
-        UserDefaults.standard.set(true, forKey: "biomarkerSeedV2")
         DebugLog.shared.add("seed: biomarkers rows=\(records.count - 1)")
         return true
     }
