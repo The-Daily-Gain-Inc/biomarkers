@@ -64,7 +64,7 @@ targets:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: ca.thedailygain.biomarkers.widget
+        PRODUCT_BUNDLE_IDENTIFIER: ca.thedailygain.biomarkers.today
         SWIFT_VERSION: "5.0"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ADPUGXVDZQ
