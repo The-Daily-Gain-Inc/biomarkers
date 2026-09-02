@@ -18,11 +18,14 @@ targets:
         product: FirebaseFirestore
       - package: Firebase
         product: FirebaseAuth
+      - target: BiomarkersWidget
     entitlements:
       path: Biomarkers/Biomarkers.entitlements
       properties:
         com.apple.developer.applesignin:
           - Default
+        com.apple.security.application-groups:
+          - group.ca.thedailygain.biomarkers
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ca.thedailygain.biomarkers
@@ -39,3 +42,31 @@ targets:
         MARKETING_VERSION: 0.1.0
         TARGETED_DEVICE_FAMILY: "1,2"
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+
+  BiomarkersWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - BiomarkersWidget
+      - Biomarkers/Widget/WidgetSnapshot.swift
+    entitlements:
+      path: BiomarkersWidget/BiomarkersWidget.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.ca.thedailygain.biomarkers
+    info:
+      path: BiomarkersWidget/Info.plist
+      properties:
+        CFBundleDisplayName: Biomarkers
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ca.thedailygain.biomarkers.widget
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ADPUGXVDZQ
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 0.1.0
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SKIP_INSTALL: YES

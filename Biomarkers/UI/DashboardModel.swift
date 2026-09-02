@@ -52,7 +52,9 @@ final class DashboardModel: ObservableObject {
     ]
 
     /// Accent color per metric (detail views, Today cells).
-    static func tint(for id: String) -> Color {
+    static func tint(for id: String) -> Color { Color(hex: tintHex(for: id)) }
+
+    static func tintHex(for id: String) -> UInt32 {
         let map: [String: UInt32] = [
             "readiness": 0x2FA36B, "resilience": 0x2FA36B, "sleep_score": 0x5B6CF0, "sleep_hours": 0x5B6CF0,
             "o_stress": 0xE0791F, "o_activity": 0x00A6A0, "steps": 0x2E8BE6,
@@ -62,7 +64,7 @@ final class DashboardModel: ObservableObject {
             "glucose": 0xE0791F, "bp_sys": 0xD1477A, "bp_dia": 0xD1477A, "ear": 0x00A6A0,
             "reading": 0x5B6CF0, "meditation": 0x2FA36B, "porn": 0xD1477A,
         ]
-        return Color(hex: map[id] ?? 0x2E8BE6)
+        return map[id] ?? 0x2E8BE6
     }
 
     /// Manually-entered metrics: (key, label, unit). Logged via the Log sheet,
@@ -270,6 +272,7 @@ final class DashboardModel: ObservableObject {
         defer {
             staging = false
             metrics = working   // single publish → one grid invalidation
+            WidgetPublisher.publish(from: working)
         }
         loadFromActivityCache(context: context, windowStart: days.first!)
 
