@@ -57,6 +57,9 @@ targets:
       - Biomarkers/Garmin/GarminClient.swift
       - Biomarkers/Oura/OuraAuth.swift
       - Biomarkers/Oura/OuraClient.swift
+      - Biomarkers/Renpho/RenphoSession.swift
+      - Biomarkers/Renpho/RenphoClient.swift
+      - Biomarkers/Renpho/RenphoCrypto.swift
       - Biomarkers/App/Config.swift
       - Biomarkers/App/Secrets.swift
       - Biomarkers/App/DebugLog.swift

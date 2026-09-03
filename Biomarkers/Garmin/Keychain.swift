@@ -35,11 +35,15 @@ enum Keychain {
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
             kSecReturnData as String: true,
+            kSecReturnAttributes as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
         var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
-        return result as? Data
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let item = result as? [String: Any], let data = item[kSecValueData as String] as? Data else { return nil }
+        // Migrate a pre-sharing item into the App Group so the widget sees it.
+        if (item[kSecAttrAccessGroup as String] as? String) != sharedGroup { save(data, key: key) }
+        return data
     }
 
     static func delete(key: String) {

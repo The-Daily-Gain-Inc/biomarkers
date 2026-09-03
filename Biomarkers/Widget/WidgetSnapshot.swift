@@ -44,7 +44,7 @@ enum WidgetBridge {
     static let snapshotKey = "widget_snapshot_v2"
     static let widgetKind = "BiomarkersTodayWidget"
     /// Which metric ids the widget shows, in order (first four fit).
-    static let headlineIds = ["readiness", "sleep_score", "o_hrv", "rhr", "steps", "rp_weight"]
+    static let headlineIds = ["readiness", "sleep_score", "o_hrv", "rhr", "o_stress", "steps", "rp_weight"]
 
     /// Display metadata the widget needs even when it builds a metric itself.
     struct Info { let title: String; let unit: String?; let tint: UInt32; let higherIsBetter: Bool; let format: (Double) -> String }
@@ -53,6 +53,7 @@ enum WidgetBridge {
         "sleep_score": Info(title: "Sleep Score", unit: nil,  tint: 0x5B6CF0, higherIsBetter: true)  { String(Int($0.rounded())) },
         "o_hrv":       Info(title: "HRV",        unit: "ms",  tint: 0x8A6BD6, higherIsBetter: true)  { String(Int($0.rounded())) },
         "rhr":         Info(title: "Resting HR", unit: "bpm", tint: 0xD1477A, higherIsBetter: false) { String(Int($0.rounded())) },
+        "o_stress":    Info(title: "Stress",     unit: "h high", tint: 0xE0791F, higherIsBetter: false) { String(format: "%.1f", $0) },
         "steps":       Info(title: "Steps",      unit: nil,   tint: 0x2E8BE6, higherIsBetter: true)  { String(Int($0.rounded())) },
         "rp_weight":   Info(title: "Weight",     unit: "kg",  tint: 0x00A6A0, higherIsBetter: false) { String(format: "%.1f", $0) },
     ]

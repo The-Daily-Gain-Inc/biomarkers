@@ -6,6 +6,7 @@ struct TodayEntry: TimelineEntry {
     let date: Date
     let snapshot: WidgetSnapshot
     let isEmpty: Bool
+    var status: String = ""
 }
 
 struct TodayProvider: TimelineProvider {
@@ -27,8 +28,9 @@ struct TodayProvider: TimelineProvider {
         }
     }
     private func current() -> TodayEntry {
-        if let s = WidgetBridge.load(), !s.metrics.isEmpty { return TodayEntry(date: Date(), snapshot: s, isEmpty: false) }
-        return TodayEntry(date: Date(), snapshot: WidgetSnapshot(metrics: [], updatedAt: .distantPast), isEmpty: true)
+        let status = TodayRefresher.status
+        if let s = WidgetBridge.load(), !s.metrics.isEmpty { return TodayEntry(date: Date(), snapshot: s, isEmpty: false, status: status) }
+        return TodayEntry(date: Date(), snapshot: WidgetSnapshot(metrics: [], updatedAt: .distantPast), isEmpty: true, status: status)
     }
 }
 
@@ -64,7 +66,7 @@ struct TodayWidgetView: View {
     let entry: TodayEntry
 
     private var shown: [WidgetMetric] {
-        Array(entry.snapshot.metrics.prefix(family == .systemSmall ? 2 : (family == .systemLarge ? 6 : 4)))
+        Array(entry.snapshot.metrics.prefix(family == .systemSmall ? 2 : (family == .systemLarge ? 8 : 6)))
     }
 
     var body: some View {
@@ -83,10 +85,13 @@ struct TodayWidgetView: View {
                     .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                 Spacer()
                 if !entry.isEmpty {
-                    Text(entry.snapshot.updatedAt, style: .relative)
+                    Text(entry.snapshot.updatedAt, style: .time)
                         .font(.caption2).foregroundStyle(.tertiary)
                 }
                 refreshButton
+            }
+            if !entry.status.isEmpty {
+                Text(entry.status).font(.caption2).foregroundStyle(.orange).lineLimit(1)
             }
             if entry.isEmpty {
                 Spacer()
@@ -95,7 +100,7 @@ struct TodayWidgetView: View {
                 Spacer()
             } else {
                 let cols = family == .systemSmall ? 1 : 2
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: cols), spacing: 6) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: cols), spacing: 4) {
                     ForEach(shown) { m in cell(m) }
                 }
             }
@@ -174,7 +179,7 @@ struct BiomarkersTodayWidget: Widget {
                 .containerBackground(.background, for: .widget)
         }
         .configurationDisplayName("Today")
-        .description("Today's readiness, sleep, HRV and resting heart rate, with a week of trend. Tap ↻ to pull fresh numbers.")
+        .description("Today's readiness, sleep, HRV, resting heart rate, stress, steps and weight, with a week of trend. Tap ↻ to pull fresh numbers.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge, .accessoryCircular, .accessoryRectangular, .accessoryInline])
     }
 }
