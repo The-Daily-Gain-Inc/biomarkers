@@ -49,6 +49,17 @@ targets:
     sources:
       - BiomarkersWidget
       - Biomarkers/Widget/WidgetSnapshot.swift
+      # Provider clients so the widget can refresh itself (Foundation-only).
+      - Biomarkers/Garmin/Keychain.swift
+      - Biomarkers/Garmin/SessionStore.swift
+      - Biomarkers/Garmin/GarminToken.swift
+      - Biomarkers/Garmin/GarminOAuth.swift
+      - Biomarkers/Garmin/GarminClient.swift
+      - Biomarkers/Oura/OuraAuth.swift
+      - Biomarkers/Oura/OuraClient.swift
+      - Biomarkers/App/Config.swift
+      - Biomarkers/App/Secrets.swift
+      - Biomarkers/App/DebugLog.swift
     entitlements:
       path: BiomarkersWidget/BiomarkersWidget.entitlements
       properties:

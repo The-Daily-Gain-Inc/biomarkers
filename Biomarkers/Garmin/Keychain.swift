@@ -1,8 +1,13 @@
 import Foundation
 import Security
 
+/// Tokens live in the App Group keychain so the widget extension can pull
+/// data on its own. Reads don't pin an access group, so items saved before
+/// sharing (in the app's private group) are still found; the next save
+/// moves them into the shared group.
 enum Keychain {
     private static let service = "ca.thedailygain.biomarkers"
+    private static let sharedGroup = "group.ca.thedailygain.biomarkers"
 
     static func save(_ data: Data, key: String) {
         let query: [String: Any] = [
@@ -14,7 +19,14 @@ enum Keychain {
         var attrs = query
         attrs[kSecValueData as String] = data
         attrs[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(attrs as CFDictionary, nil)
+        attrs[kSecAttrAccessGroup as String] = sharedGroup
+        let status = SecItemAdd(attrs as CFDictionary, nil)
+        if status != errSecSuccess {
+            // Shared group unavailable (e.g. entitlement missing) — keep the
+            // credential in the private keychain rather than losing it.
+            attrs.removeValue(forKey: kSecAttrAccessGroup as String)
+            SecItemAdd(attrs as CFDictionary, nil)
+        }
     }
 
     static func load(key: String) -> Data? {

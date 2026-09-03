@@ -1,5 +1,6 @@
 import WidgetKit
 import SwiftUI
+import AppIntents
 
 struct TodayEntry: TimelineEntry {
     let date: Date
@@ -13,10 +14,17 @@ struct TodayProvider: TimelineProvider {
         completion(context.isPreview ? TodayEntry(date: Date(), snapshot: .placeholder, isEmpty: false) : current())
     }
     func getTimeline(in context: Context, completion: @escaping (Timeline<TodayEntry>) -> Void) {
-        // The app reloads us after every dashboard refresh; poll every few
-        // hours anyway so a stale snapshot can't sit all day.
-        let next = Calendar.current.date(byAdding: .hour, value: 3, to: Date()) ?? Date()
-        completion(Timeline(entries: [current()], policy: .after(next)))
+        // The app reloads us after every dashboard refresh; the refresh button
+        // pulls on demand. On WidgetKit's own reloads, pull from the providers
+        // too when the snapshot is old, so today's numbers arrive without
+        // opening the app (attempts are spaced to respect the refresh budget).
+        Task { @MainActor in
+            let stale = Date().timeIntervalSince(WidgetBridge.load()?.updatedAt ?? .distantPast) > 30 * 60
+            let spaced = Date().timeIntervalSince(TodayRefresher.lastAttempt) > 20 * 60
+            if stale && spaced { await TodayRefresher.refresh() }
+            let next = Calendar.current.date(byAdding: .hour, value: 1, to: Date()) ?? Date()
+            completion(Timeline(entries: [current()], policy: .after(next)))
+        }
     }
     private func current() -> TodayEntry {
         if let s = WidgetBridge.load(), !s.metrics.isEmpty { return TodayEntry(date: Date(), snapshot: s, isEmpty: false) }
@@ -78,10 +86,11 @@ struct TodayWidgetView: View {
                     Text(entry.snapshot.updatedAt, style: .relative)
                         .font(.caption2).foregroundStyle(.tertiary)
                 }
+                refreshButton
             }
             if entry.isEmpty {
                 Spacer()
-                Text("Open Biomarkers to load today's numbers")
+                Text("Tap ↻ to pull today's numbers")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
             } else {
@@ -93,11 +102,30 @@ struct TodayWidgetView: View {
         }
     }
 
+    private var refreshButton: some View {
+        Button(intent: RefreshTodayIntent()) {
+            Image(systemName: "arrow.clockwise")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// "Readiness" for today's value, "Readiness · Yesterday" / "· Mon" when
+    /// the ring hasn't synced today yet.
+    private func label(_ m: WidgetMetric) -> String {
+        guard let day = m.day, !m.isToday else { return m.title }
+        if Calendar.current.isDateInYesterday(day) { return m.title + " · " + String(localized: "Yesterday") }
+        return m.title + " · " + day.formatted(.dateTime.weekday(.abbreviated))
+    }
+
     private func cell(_ m: WidgetMetric) -> some View {
         let tint = Color(hex: m.tint)
         return HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 0) {
-                Text(m.title).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                Text(label(m)).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                 HStack(alignment: .firstTextBaseline, spacing: 2) {
                     Text(m.value).font(.system(.title3, design: .rounded).weight(.bold)).foregroundStyle(tint)
                         .minimumScaleFactor(0.7).lineLimit(1)
@@ -146,7 +174,7 @@ struct BiomarkersTodayWidget: Widget {
                 .containerBackground(.background, for: .widget)
         }
         .configurationDisplayName("Today")
-        .description("Readiness, sleep, HRV and resting heart rate with a week of trend.")
+        .description("Today's readiness, sleep, HRV and resting heart rate, with a week of trend. Tap ↻ to pull fresh numbers.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge, .accessoryCircular, .accessoryRectangular, .accessoryInline])
     }
 }

@@ -272,7 +272,7 @@ final class DashboardModel: ObservableObject {
         defer {
             staging = false
             metrics = working   // single publish → one grid invalidation
-            WidgetPublisher.publish(from: working)
+            WidgetPublisher.publish(rows: Array(metricIndex.values))
         }
         loadFromActivityCache(context: context, windowStart: days.first!)
 
