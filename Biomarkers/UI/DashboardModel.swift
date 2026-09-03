@@ -90,7 +90,7 @@ final class DashboardModel: ObservableObject {
         return [
         .init(id: "workout_cal", titleKey: "Calories Burned", provider: .garmin, unit: "kcal"),
         .init(id: "gym", titleKey: "Gym & Fitness", provider: .garmin, unit: "workouts"),
-        .init(id: "vo2", titleKey: "VO2 Max", provider: .oura),
+        .init(id: "vo2", titleKey: "VO2 Max", provider: .garmin),
         .init(id: "fit_age", titleKey: "Fitness Age", provider: .garmin, unit: "yrs"),
         .init(id: "load", titleKey: "Training Load", provider: .garmin),
         .init(id: "rhr", titleKey: "Resting HR", provider: .oura, unit: "bpm"),
@@ -337,6 +337,8 @@ final class DashboardModel: ObservableObject {
 
     // MARK: - Garmin
 
+    private static var dayFormatter: DateFormatter { GarminClient.dayFormatter }
+
     private func loadGarmin(context: ModelContext, garmin: SessionStore, days: [Date]) async {
         guard garmin.isLoggedIn else { return }
         let client = GarminClient(session: garmin)
@@ -359,6 +361,17 @@ final class DashboardModel: ObservableObject {
                 upsert(context, day: day, key: "fit_age", value: v)
             }
             // Stress comes from Oura only (Garmin's 0–100 level is not used).
+        }
+        // VO2 max from Garmin's maxmet service, one value per day it was
+        // measured (a run/walk with HR). Overwrites any older Oura estimate.
+        if let first = days.first, let last = days.last,
+           let rows = try? await client.vo2maxDaily(start: first, end: last) {
+            for row in rows {
+                let g = (row["generic"] as? [String: Any]) ?? row
+                guard let ds = g["calendarDate"] as? String, let d = Self.dayFormatter.date(from: ds) else { continue }
+                let v = (g["vo2MaxPreciseValue"] as? NSNumber)?.doubleValue ?? (g["vo2MaxValue"] as? NSNumber)?.doubleValue ?? 0
+                if v > 0 { upsert(context, day: d, key: "vo2", value: v) }
+            }
         }
         if let sync = try? await client.lastDeviceSync() { Self.setSynced("garmin", sync) }
         if let battery = try? await client.deviceBattery() {
@@ -471,9 +484,7 @@ final class DashboardModel: ObservableObject {
                 }
             }
         }
-        if let rows = try? await client.dailyCollection("vO2_max", start: windowStart, end: qEnd) {
-            for r in rows { if let d = day(from: r), let v = (r["vo2_max"] as? NSNumber)?.doubleValue, v > 0 { upsert(context, day: d, key: "vo2", value: v) } }
-        }
+        // VO2 max comes from Garmin (maxmet) — Oura's estimate is not used.
         if let rows = try? await client.dailyCollection("daily_cardiovascular_age", start: windowStart, end: qEnd),
            let info = try? await client.personalInfo(), let age = (info["age"] as? NSNumber)?.doubleValue {
             // One point per day, so Years Younger has a Trends history — not just
