@@ -8,6 +8,9 @@ import SwiftData
 @MainActor
 final class ZoneAggregator: ObservableObject {
     @Published private(set) var cache: [Int: [Double]] = [:]
+    /// Bumps every time the cache is rebuilt — a cheap trigger for views that
+    /// derive their series from it.
+    @Published private(set) var version = 0
     private var key = ""
 
     /// True once bucketing has produced results.
@@ -34,6 +37,7 @@ final class ZoneAggregator: ObservableObject {
         }.value
         cache = result
         key = signature
+        version += 1
     }
 
     /// Time-in-zone from a raw HR series against `floors`; mirrors
@@ -54,9 +58,13 @@ final class ZoneAggregator: ObservableObject {
     }
 
     /// Signature of the inputs the cache depends on: Max HR, activity count,
-    /// and total HR samples (so a backfill of raw HR re-triggers the rebuild).
+    /// and how many activities have their raw HR series (a backfill flips
+    /// `hrChecked`, so it re-triggers the rebuild). Only scalar properties
+    /// are read: summing `hrBpm.count` decoded every activity's HR array on
+    /// the main thread on every render.
     static func signature(activities: [CachedActivity], maxHR: Int) -> String {
-        let samples = activities.reduce(0) { $0 + $1.hrBpm.count }
-        return "\(maxHR)-\(activities.count)-\(samples)"
+        var withHR = 0
+        for a in activities where a.hrChecked { withHR += 1 }
+        return "\(maxHR)-\(activities.count)-\(withHR)"
     }
 }

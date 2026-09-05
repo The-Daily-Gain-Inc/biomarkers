@@ -27,6 +27,14 @@ final class DashboardModel: ObservableObject {
     @Published var metrics: [Metric] = DashboardModel.placeholders
     @Published var isLoading = false
     @Published var isLoadingHistory = false
+    /// Trends matrix: metricId → weekIndex → value, computed off the main
+    /// thread by `refreshTrends`. TrendsView used to recompute this over every
+    /// DailyMetric and activity inside its body, on every render.
+    @Published var trendValues: [String: [Int: Double]] = [:]
+    private var trendsStamp = ""
+    /// Bumped whenever the cache changes so trend refreshes can be skipped
+    /// when nothing moved.
+    private var dataVersion = 0
 
     /// Activity-derived tiles summed per week (not stored in DailyMetric).
     static let activityMetricIds: Set<String> = ["workout_cal", "gym", "load"]
@@ -167,6 +175,77 @@ final class DashboardModel: ObservableObject {
         if let all = try? context.fetch(FetchDescriptor<DailyMetric>()) {
             for m in all { metricIndex[m.id] = m }
         }
+        dataVersion += 1
+    }
+
+    // MARK: - Trends (off-main)
+
+    private struct MetricSnap: Sendable { let key: String; let day: Date; let value: Double }
+    private struct ActSnap: Sendable { let start: Date; let calories: Double; let typeKey: String; let load: Double }
+
+    /// Rebuilds `trendValues` for `weeks` trailing 7-day windows from plain
+    /// snapshots of the cache, on a background thread. A no-op when neither
+    /// the data nor the window changed since the last build.
+    func refreshTrends(context: ModelContext, weeks: Int, force: Bool = false) async {
+        if metricIndex.isEmpty { loadIndex(context) }
+        let acts = (try? context.fetch(FetchDescriptor<CachedActivity>())) ?? []
+        let stamp = "\(weeks)-\(dataVersion)-\(metricIndex.count)-\(acts.count)"
+        if !force && stamp == trendsStamp && !trendValues.isEmpty { return }
+
+        let metricSnaps = metricIndex.values.map { MetricSnap(key: $0.metricKey, day: $0.day, value: $0.value) }
+        let actSnaps = acts.map { ActSnap(start: $0.startDate, calories: $0.calories, typeKey: $0.typeKey, load: $0.trainingLoad) }
+        let ids = Self.placeholders.map(\.id)
+        let aggs: [String: Agg] = Dictionary(uniqueKeysWithValues: ids.compactMap { id in Self.spec(for: id).map { (id, $0.agg) } })
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let ws: [(start: Date, end: Date)] = (0..<weeks).map { k in
+            let end = cal.date(byAdding: .day, value: -7 * k, to: today)!
+            let start = cal.date(byAdding: .day, value: -6, to: end)!
+            return (start, end)
+        }
+
+        let result: [String: [Int: Double]] = await Task.detached(priority: .userInitiated) {
+            var dayMap: [String: [Date: Double]] = [:]
+            for m in metricSnaps { dayMap[m.key, default: [:]][cal.startOfDay(for: m.day)] = m.value }
+            var actsByWeek: [Int: [ActSnap]] = [:]
+            for (i, w) in ws.enumerated() {
+                let endEx = cal.date(byAdding: .day, value: 1, to: w.end)!
+                actsByWeek[i] = actSnaps.filter { $0.start >= w.start && $0.start < endEx }
+            }
+            let gymKeys = ["strength_training", "fitness_equipment", "indoor_cardio", "hiit", "yoga", "pilates"]
+            var out: [String: [Int: Double]] = [:]
+            for id in ids {
+                var perWeek: [Int: Double] = [:]
+                for (i, w) in ws.enumerated() {
+                    if DashboardModel.activityMetricIds.contains(id) {
+                        let acts = actsByWeek[i] ?? []
+                        guard !acts.isEmpty else { continue }
+                        switch id {
+                        case "workout_cal": let s = acts.map(\.calories).reduce(0, +); if s > 0 { perWeek[i] = s }
+                        case "gym": perWeek[i] = Double(acts.filter { a in gymKeys.contains { a.typeKey.contains($0) } }.count)
+                        case "load": let s = acts.map(\.load).reduce(0, +); if s > 0 { perWeek[i] = s }
+                        default: break
+                        }
+                    } else if let agg = aggs[id], let map = dayMap[id] {
+                        var vals: [(Date, Double)] = []
+                        var d = w.start
+                        while d <= w.end {
+                            if let v = map[cal.startOfDay(for: d)] { vals.append((d, v)) }
+                            d = cal.date(byAdding: .day, value: 1, to: d)!
+                        }
+                        guard !vals.isEmpty else { continue }
+                        switch agg {
+                        case .avg: perWeek[i] = vals.map(\.1).reduce(0, +) / Double(vals.count)
+                        case .latest: perWeek[i] = vals.max { $0.0 < $1.0 }?.1
+                        }
+                    }
+                }
+                out[id] = perWeek
+            }
+            return out
+        }.value
+        trendValues = result
+        trendsStamp = stamp
     }
 
     /// Values staged during a render pass, then flushed to `metrics` in one
@@ -277,11 +356,12 @@ final class DashboardModel: ObservableObject {
         loadFromActivityCache(context: context, windowStart: days.first!)
 
         let all = Array(metricIndex.values)
+        let byKey = Dictionary(grouping: all, by: \.metricKey)
         let dayStarts = days.map { Calendar.current.startOfDay(for: $0) }
         for metric in Self.placeholders {
             let key = metric.id
             guard !Self.activityMetricIds.contains(key), let spec = Self.spec(for: key) else { continue }
-            let rows = all.filter { $0.metricKey == key }
+            let rows = byKey[key] ?? []
             // Body composition is measured irregularly — show the latest
             // reading and its recent trend, not just the trailing 7 days.
             if key.hasPrefix("rp_") {
@@ -329,6 +409,7 @@ final class DashboardModel: ObservableObject {
             context.insert(m)
             metricIndex[id] = m
         }
+        dataVersion += 1
     }
 
     private func isCached(_ context: ModelContext, day: Date, key: String) -> Bool {

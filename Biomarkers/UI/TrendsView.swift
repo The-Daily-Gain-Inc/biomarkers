@@ -9,9 +9,7 @@ struct TrendsView: View {
     @EnvironmentObject var ouraSession: OuraSession
     @EnvironmentObject var renphoSession: RenphoSession
     @Environment(\.modelContext) private var context
-    @StateObject private var model = DashboardModel()
-    @Query private var dailyMetrics: [DailyMetric]
-    @Query private var activities: [CachedActivity]
+    @EnvironmentObject var model: DashboardModel
     @AppStorage("weeksOfHistory") private var weeksOfHistory = 6
     @AppStorage("trendsHiddenCSV") private var trendsHiddenCSV = ""
     @State private var showVisibility = false
@@ -39,10 +37,10 @@ struct TrendsView: View {
     }
 
     var body: some View {
-        // Precompute every cell value once per data change (not per cell) so
-        // scrolling and load-more stay smooth even with many weeks.
+        // Cell values come precomputed from the model (off the main thread);
+        // the body only reads dictionaries.
         let ws = weeks
-        let values = computeValues(ws)
+        let values = model.trendValues
         return NavigationStack {
             ScrollView(.vertical) {
                 HStack(alignment: .top, spacing: 0) {
@@ -75,7 +73,7 @@ struct TrendsView: View {
             .sheet(isPresented: $showVisibility) {
                 MetricVisibilityEditor(hiddenCSV: $trendsHiddenCSV)
             }
-            .task { await loadHistory(force: false) }
+            .task(id: weeksOfHistory) { await loadHistory(force: false) }
             .onChange(of: weeksOfHistory) { _, _ in Task { await loadHistory(force: true) } }
             .refreshable { await loadHistory(force: true) }
             .overlay(alignment: .top) {
@@ -128,6 +126,7 @@ struct TrendsView: View {
         let cacheOnly = !force && !DashboardModel.isStale()
         await model.loadHistory(context: context, garmin: session, oura: ouraSession,
                                 renpho: renphoSession, weeks: weeksOfHistory, cacheOnly: cacheOnly)
+        await model.refreshTrends(context: context, weeks: weeksOfHistory)
     }
 
     /// Trailing column that loads another block of older weeks on demand
@@ -230,55 +229,5 @@ struct TrendsView: View {
     private func formatted(id: String, _ value: Double) -> String {
         if let spec = DashboardModel.spec(for: id) { return spec.format(value) }
         return String(Int(value))   // activity metrics
-    }
-
-    // MARK: - Precomputed cell values
-
-    /// Builds metricId → weekIndex → value in one pass, using dictionary
-    /// lookups instead of re-filtering the whole dataset per cell.
-    private func computeValues(_ ws: [(start: Date, end: Date)]) -> [String: [Int: Double]] {
-        // Daily metric value keyed by (metricKey, startOfDay).
-        var dayMap: [String: [Date: Double]] = [:]
-        for m in dailyMetrics { dayMap[m.metricKey, default: [:]][m.day] = m.value }
-
-        // Activities bucketed per week index.
-        var actsByWeek: [Int: [CachedActivity]] = [:]
-        for (i, w) in ws.enumerated() {
-            let endEx = cal.date(byAdding: .day, value: 1, to: w.end)!
-            actsByWeek[i] = activities.filter { $0.startDate >= w.start && $0.startDate < endEx }
-        }
-        let gymKeys = ["strength_training", "fitness_equipment", "indoor_cardio", "hiit", "yoga", "pilates"]
-
-        var out: [String: [Int: Double]] = [:]
-        for metric in DashboardModel.placeholders {
-            let id = metric.id
-            var perWeek: [Int: Double] = [:]
-            for (i, w) in ws.enumerated() {
-                if DashboardModel.activityMetricIds.contains(id) {
-                    let acts = actsByWeek[i] ?? []
-                    guard !acts.isEmpty else { continue }
-                    switch id {
-                    case "workout_cal": let s = acts.map(\.calories).reduce(0, +); if s > 0 { perWeek[i] = s }
-                    case "gym": perWeek[i] = Double(acts.filter { a in gymKeys.contains { a.typeKey.contains($0) } }.count)
-                    case "load": let s = acts.map(\.trainingLoad).reduce(0, +); if s > 0 { perWeek[i] = s }
-                    default: break
-                    }
-                } else if let spec = DashboardModel.spec(for: id), let map = dayMap[id] {
-                    var vals: [(Date, Double)] = []
-                    var d = w.start
-                    while d <= w.end {
-                        if let v = map[cal.startOfDay(for: d)] { vals.append((d, v)) }
-                        d = cal.date(byAdding: .day, value: 1, to: d)!
-                    }
-                    guard !vals.isEmpty else { continue }
-                    switch spec.agg {
-                    case .avg: perWeek[i] = vals.map(\.1).reduce(0, +) / Double(vals.count)
-                    case .latest: perWeek[i] = vals.max { $0.0 < $1.0 }?.1
-                    }
-                }
-            }
-            out[id] = perWeek
-        }
-        return out
     }
 }

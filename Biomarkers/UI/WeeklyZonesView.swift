@@ -19,52 +19,64 @@ struct ZoneSectionsView: View {
     @EnvironmentObject var agg: ZoneAggregator
     @Environment(\.colorScheme) private var scheme
     @Query(sort: \CachedActivity.startDate, order: .reverse) private var activities: [CachedActivity]
+    /// Only the four sleep-stage rows — the whole DailyMetric table used to
+    /// be fetched (and re-fetched on every change) for these.
     @Query private var sleepMetrics: [DailyMetric]
     @State private var weekOffset = 0
     @State private var selectedDay = Calendar.current.startOfDay(for: Date())
+    /// Every series the cards draw, computed once off the main thread per
+    /// data change. The computed properties below used to walk every
+    /// activity and every sleep row (up to 260 weeks × all rows) on each
+    /// render — that was the Dashboard's stutter.
+    @State private var derived: ZoneDerived?
+
+    init(mode: ZonesMode) {
+        self.mode = mode
+        let keys = SleepPalette.keys
+        _sleepMetrics = Query(filter: #Predicate<DailyMetric> { keys.contains($0.metricKey) })
+    }
 
     private var cacheSignature: String {
         ZoneAggregator.signature(activities: activities, maxHR: zones.maxHR)
     }
 
-    private func zoneSecs(_ a: CachedActivity) -> [Double] { agg.zoneSecs(a) }
-
-    private var cacheReady: Bool { agg.isReady || activities.isEmpty }
-
-    // MARK: - Derived data
-
-    private var selectedDayZones: [Double] {
-        let cal = Calendar.current
-        return activities.filter { cal.isDate($0.startDate, inSameDayAs: selectedDay) }
-            .reduce(into: [Double](repeating: 0, count: 5)) { acc, a in
-                for (i, s) in zoneSecs(a).enumerated() { acc[i] += s }
-            }
+    /// Cheap key for re-deriving: counts and versions only, no row reads.
+    private var derivedKey: String {
+        "\(activities.count)-\(sleepMetrics.count)-\(agg.version)-\(zones.maxHR)-\(weekOffset)-\(Int(selectedDay.timeIntervalSince1970))"
     }
 
-    private func sleepMinutes(for day: Date) -> [Double] {
-        let cal = Calendar.current
-        return SleepPalette.keys.map { key in
-            sleepMetrics.first { $0.metricKey == key && cal.isDate($0.day, inSameDayAs: day) }?.value ?? 0
-        }
+    private var cacheReady: Bool { derived != nil && (agg.isReady || activities.isEmpty) }
+
+    private func recompute() async {
+        let snapActs = activities.map { ZoneDerived.Act(id: $0.activityId, start: $0.startDate, zones: agg.zoneSecs($0)) }
+        let snapSleep = sleepMetrics.map { ZoneDerived.Sleep(key: $0.metricKey, day: $0.day, value: $0.value) }
+        let input = ZoneDerived.Input(acts: snapActs, sleep: snapSleep,
+                                      selectedDay: selectedDay, weekInterval: weekInterval,
+                                      calendar: calendar, last7Days: last7Days)
+        let result = await Task.detached(priority: .userInitiated) { ZoneDerived.compute(input) }.value
+        derived = result
     }
 
-    private var weeklySleep: [(date: Date, minutes: [Double])] {
-        last7Days.map { ($0, sleepMinutes(for: $0)) }
-    }
+    // MARK: - Derived data (read from `derived`; see ZoneDerived.compute)
 
-    private func latestSleepDay() -> Date? {
-        sleepMetrics.filter { SleepPalette.keys.contains($0.metricKey) }.map(\.day).max()
-    }
+    private static let zeros5 = [Double](repeating: 0, count: 5)
 
-    /// The sleep to show for the selected day. Sleep is dated to the morning
-    /// you woke, so "today" is last night. Falls back to the most recent night.
-    private var displayedSleep: (day: Date, minutes: [Double]) {
-        let m = sleepMinutes(for: selectedDay)
-        if m.reduce(0, +) > 0 { return (selectedDay, m) }
-        if Calendar.current.isDateInToday(selectedDay), let latest = latestSleepDay() {
-            return (latest, sleepMinutes(for: latest))
-        }
-        return (selectedDay, m)
+    private var selectedDayZones: [Double] { derived?.selectedDayZones ?? Self.zeros5 }
+    private var displayedSleep: (day: Date, minutes: [Double]) { derived?.displayedSleep ?? (selectedDay, [0, 0, 0, 0]) }
+    private var weeklySleep: [(date: Date, minutes: [Double])] { derived?.weeklySleep ?? [] }
+    private var zoneTotals: [Double] { derived?.zoneTotals ?? Self.zeros5 }
+    private var allTimeZoneTotals: [Double] { derived?.allTimeZoneTotals ?? Self.zeros5 }
+    private var allTimeSleepTotals: [Double] { derived?.allTimeSleepTotals ?? [0, 0, 0, 0] }
+    private var weeklySleepTrend: [(weekStart: Date, minutes: [Double])] { derived?.weeklySleepTrend ?? [] }
+    private var trendWeeks: Int { derived?.trendWeeks ?? 12 }
+    private var weeklyZoneTrend: [(weekStart: Date, zones: [Double])] { derived?.weeklyZoneTrend ?? [] }
+    private var dailyZoneSeconds: [(date: Date, zones: [Double])] { derived?.dailyZoneSeconds ?? [] }
+
+    /// This week's activities, newest first (the query order).
+    private var weekActivities: [CachedActivity] {
+        guard let ids = derived?.weekActivityIds, !ids.isEmpty else { return [] }
+        let set = Set(ids)
+        return activities.filter { set.contains($0.activityId) }
     }
 
     private var calendar: Calendar {
@@ -78,84 +90,10 @@ struct ZoneSectionsView: View {
         return calendar.dateInterval(of: .weekOfYear, for: now)!
     }
 
-    private var weekActivities: [CachedActivity] {
-        activities.filter { weekInterval.contains($0.startDate) }
-    }
-
-    private var zoneTotals: [Double] {
-        weekActivities.reduce(into: [Double](repeating: 0, count: 5)) { acc, a in
-            for (i, secs) in zoneSecs(a).enumerated() { acc[i] += secs }
-        }
-    }
-
     private var last7Days: [Date] {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
         return (0..<7).map { cal.date(byAdding: .day, value: -6 + $0, to: today)! }
-    }
-
-    private var allTimeZoneTotals: [Double] {
-        activities.reduce(into: [Double](repeating: 0, count: 5)) { acc, a in
-            for (i, s) in zoneSecs(a).enumerated() { acc[i] += s }
-        }
-    }
-
-    /// Total minutes per sleep stage (deep, light, rem, awake) across all nights.
-    private var allTimeSleepTotals: [Double] {
-        SleepPalette.keys.map { key in
-            sleepMetrics.filter { $0.metricKey == key }.reduce(0) { $0 + $1.value }
-        }
-    }
-
-    /// Per-week sleep-stage minutes over the trend window (oldest first).
-    private var weeklySleepTrend: [(weekStart: Date, minutes: [Double])] {
-        let cal = calendar
-        let thisWeekStart = weekInterval.start
-        return (0..<trendWeeks).reversed().map { back in
-            let start = cal.date(byAdding: .weekOfYear, value: -back, to: thisWeekStart)!
-            let interval = cal.dateInterval(of: .weekOfYear, for: start)!
-            let mins = SleepPalette.keys.map { key in
-                sleepMetrics.filter { $0.metricKey == key && interval.contains($0.day) }
-                    .reduce(0) { $0 + $1.value }
-            }
-            return (interval.start, mins)
-        }
-    }
-
-    /// How many ISO weeks of history to show: back to the oldest activity
-    /// (capped at 5 years to stay sane), minimum 12.
-    private var trendWeeks: Int {
-        let cal = calendar
-        guard let oldest = activities.map(\.startDate).min() else { return 12 }
-        let weeks = (cal.dateComponents([.weekOfYear],
-                     from: cal.dateInterval(of: .weekOfYear, for: oldest)!.start,
-                     to: weekInterval.start).weekOfYear ?? 0) + 1
-        return min(max(weeks, 12), 260)
-    }
-
-    private var weeklyZoneTrend: [(weekStart: Date, zones: [Double])] {
-        let cal = calendar
-        let thisWeekStart = weekInterval.start
-        return (0..<trendWeeks).reversed().map { back in
-            let start = cal.date(byAdding: .weekOfYear, value: -back, to: thisWeekStart)!
-            let interval = cal.dateInterval(of: .weekOfYear, for: start)!
-            let acts = activities.filter { interval.contains($0.startDate) }
-            let z = acts.reduce(into: [Double](repeating: 0, count: 5)) { acc, a in
-                for (i, s) in zoneSecs(a).enumerated() { acc[i] += s }
-            }
-            return (interval.start, z)
-        }
-    }
-
-    private var dailyZoneSeconds: [(date: Date, zones: [Double])] {
-        let cal = Calendar.current
-        return last7Days.map { day in
-            let dayActs = activities.filter { cal.isDate($0.startDate, inSameDayAs: day) }
-            let dz = dayActs.reduce(into: [Double](repeating: 0, count: 5)) { acc, a in
-                for (i, s) in zoneSecs(a).enumerated() { acc[i] += s }
-            }
-            return (day, dz)
-        }
     }
 
     // MARK: - Body
@@ -182,6 +120,7 @@ struct ZoneSectionsView: View {
         .task(id: cacheSignature) {
             await agg.rebuild(signature: cacheSignature, activities: activities, floors: zones.floors)
         }
+        .task(id: derivedKey) { await recompute() }
     }
 
     /// A rounded card matching the grouped-list look, so the charts read the
@@ -233,7 +172,7 @@ struct ZoneSectionsView: View {
                 Text("No activities this week").foregroundStyle(.secondary)
             }
             ForEach(weekActivities) { activity in
-                ActivityRow(activity: activity, floors: zones.floors)
+                ActivityRow(activity: activity, zones: agg.zoneSecs(activity))
                 if activity.id != weekActivities.last?.id { Divider() }
             }
         }
@@ -658,7 +597,9 @@ struct ZoneSectionsView: View {
 
 struct ActivityRow: View {
     let activity: CachedActivity
-    var floors: [Int] = []
+    /// Bucketed seconds per zone (from ZoneAggregator's cache), so the row
+    /// doesn't re-walk the raw HR series on every render.
+    var zones: [Double] = []
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
@@ -682,7 +623,7 @@ struct ActivityRow: View {
 
     /// Proportional stacked zone strip with 2px gaps between segments.
     private var zoneBar: some View {
-        let zones = activity.zoneSeconds(floors: floors)
+        let zones = self.zones.count == 5 ? self.zones : activity.fiveZoneSeconds
         let total = zones.reduce(0, +)
         return GeometryReader { geo in
             HStack(spacing: 2) {
@@ -701,5 +642,116 @@ struct ActivityRow: View {
             }
         }
         .frame(height: 6)
+    }
+}
+
+
+/// Everything ZoneSectionsView draws, computed from plain snapshots on a
+/// background thread. Bucketing by day/week is done with dictionaries, not a
+/// filter over all rows per bucket.
+struct ZoneDerived: Sendable {
+    struct Act: Sendable { let id: Int; let start: Date; let zones: [Double] }
+    struct Sleep: Sendable { let key: String; let day: Date; let value: Double }
+    struct Input: Sendable {
+        let acts: [Act]
+        let sleep: [Sleep]
+        let selectedDay: Date
+        let weekInterval: DateInterval
+        let calendar: Calendar
+        let last7Days: [Date]
+    }
+
+    var selectedDayZones: [Double] = zeros5
+    var displayedSleep: (day: Date, minutes: [Double]) = (Date(), [0, 0, 0, 0])
+    var weeklySleep: [(date: Date, minutes: [Double])] = []
+    var weekActivityIds: [Int] = []
+    var zoneTotals: [Double] = zeros5
+    var allTimeZoneTotals: [Double] = zeros5
+    var allTimeSleepTotals: [Double] = [0, 0, 0, 0]
+    var weeklySleepTrend: [(weekStart: Date, minutes: [Double])] = []
+    var trendWeeks = 12
+    var weeklyZoneTrend: [(weekStart: Date, zones: [Double])] = []
+    var dailyZoneSeconds: [(date: Date, zones: [Double])] = []
+
+    static let zeros5 = [Double](repeating: 0, count: 5)
+
+    static func compute(_ input: Input) -> ZoneDerived {
+        var out = ZoneDerived()
+        let cal = input.calendar          // ISO week calendar
+        let dayCal = Calendar.current
+        let keys = SleepPalette.keys
+        let stage: [String: Int] = Dictionary(uniqueKeysWithValues: keys.enumerated().map { ($1, $0) })
+
+        func add(_ acc: inout [Double], _ z: [Double]) {
+            for (i, s) in z.enumerated() where i < 5 { acc[i] += s }
+        }
+
+        // Activities bucketed by start-of-day and by ISO week start.
+        var byDay: [Date: [Double]] = [:]
+        var byWeek: [Date: [Double]] = [:]
+        var all = zeros5
+        var weekIds: [Int] = []
+        var weekTotals = zeros5
+        var oldest: Date?
+        for a in input.acts {
+            add(&all, a.zones)
+            byDay[dayCal.startOfDay(for: a.start), default: zeros5] = {
+                var z = byDay[dayCal.startOfDay(for: a.start)] ?? zeros5; add(&z, a.zones); return z }()
+            let ws = cal.dateInterval(of: .weekOfYear, for: a.start)?.start ?? a.start
+            byWeek[ws] = { var z = byWeek[ws] ?? zeros5; add(&z, a.zones); return z }()
+            if input.weekInterval.contains(a.start) { weekIds.append(a.id); add(&weekTotals, a.zones) }
+            if oldest == nil || a.start < oldest! { oldest = a.start }
+        }
+        out.allTimeZoneTotals = all
+        out.weekActivityIds = weekIds
+        out.zoneTotals = weekTotals
+        out.selectedDayZones = byDay[dayCal.startOfDay(for: input.selectedDay)] ?? zeros5
+        out.dailyZoneSeconds = input.last7Days.map { ($0, byDay[dayCal.startOfDay(for: $0)] ?? zeros5) }
+
+        // Sleep stages bucketed by day and by ISO week start.
+        var sleepByDay: [Date: [Double]] = [:]
+        var sleepByWeek: [Date: [Double]] = [:]
+        var sleepAll = [0.0, 0.0, 0.0, 0.0]
+        var latestSleepDay: Date?
+        for s in input.sleep {
+            guard let i = stage[s.key] else { continue }
+            let d = dayCal.startOfDay(for: s.day)
+            var m = sleepByDay[d] ?? [0, 0, 0, 0]; m[i] += s.value; sleepByDay[d] = m
+            let ws = cal.dateInterval(of: .weekOfYear, for: s.day)?.start ?? s.day
+            var w = sleepByWeek[ws] ?? [0, 0, 0, 0]; w[i] += s.value; sleepByWeek[ws] = w
+            sleepAll[i] += s.value
+            if latestSleepDay == nil || s.day > latestSleepDay! { latestSleepDay = s.day }
+        }
+        out.allTimeSleepTotals = sleepAll
+        func sleepMinutes(_ day: Date) -> [Double] { sleepByDay[dayCal.startOfDay(for: day)] ?? [0, 0, 0, 0] }
+        out.weeklySleep = input.last7Days.map { ($0, sleepMinutes($0)) }
+        let selectedSleep = sleepMinutes(input.selectedDay)
+        if selectedSleep.reduce(0, +) > 0 {
+            out.displayedSleep = (input.selectedDay, selectedSleep)
+        } else if dayCal.isDateInToday(input.selectedDay), let latest = latestSleepDay {
+            out.displayedSleep = (latest, sleepMinutes(latest))
+        } else {
+            out.displayedSleep = (input.selectedDay, selectedSleep)
+        }
+
+        // Trend window: back to the oldest activity, 12…260 weeks.
+        let thisWeekStart = input.weekInterval.start
+        var weeks = 12
+        if let oldest, let oldestWeek = cal.dateInterval(of: .weekOfYear, for: oldest)?.start {
+            weeks = (cal.dateComponents([.weekOfYear], from: oldestWeek, to: thisWeekStart).weekOfYear ?? 0) + 1
+        }
+        weeks = min(max(weeks, 12), 260)
+        out.trendWeeks = weeks
+        var zoneTrend: [(weekStart: Date, zones: [Double])] = []
+        var sleepTrend: [(weekStart: Date, minutes: [Double])] = []
+        for back in (0..<weeks).reversed() {
+            guard let start = cal.date(byAdding: .weekOfYear, value: -back, to: thisWeekStart),
+                  let ws = cal.dateInterval(of: .weekOfYear, for: start)?.start else { continue }
+            zoneTrend.append((ws, byWeek[ws] ?? zeros5))
+            sleepTrend.append((ws, sleepByWeek[ws] ?? [0, 0, 0, 0]))
+        }
+        out.weeklyZoneTrend = zoneTrend
+        out.weeklySleepTrend = sleepTrend
+        return out
     }
 }

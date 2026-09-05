@@ -11,6 +11,9 @@ struct BiomarkersApp: App {
     @StateObject private var zones = ZoneStore()
     @StateObject private var zoneAgg = ZoneAggregator()
     @StateObject private var cloud = CloudSync()
+    /// One model for Dashboard and Trends — each tab used to own a copy and
+    /// each copy loaded the full metric table.
+    @StateObject private var dashboard = DashboardModel()
 
     init() {
         FirebaseApp.configure()
@@ -26,6 +29,7 @@ struct BiomarkersApp: App {
                 .environmentObject(zones)
                 .environmentObject(zoneAgg)
                 .environmentObject(cloud)
+                .environmentObject(dashboard)
         }
         .modelContainer(for: [
             CachedActivity.self, DailyMetric.self,

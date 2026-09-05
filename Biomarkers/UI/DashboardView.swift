@@ -9,7 +9,7 @@ struct DashboardView: View {
     @EnvironmentObject var sync: SyncEngine
     @EnvironmentObject var cloud: CloudSync
     @Environment(\.modelContext) private var context
-    @StateObject private var model = DashboardModel()
+    @EnvironmentObject var model: DashboardModel
     @AppStorage("backfillMonths") private var backfillMonths = 6
     @State private var showGarminLogin = false
     @State private var showLog = false
@@ -138,6 +138,7 @@ struct DashboardView: View {
             await sync.sync(context: context, session: session, backfillMonths: backfillMonths)
         }
         await model.load(context: context, garmin: session, oura: ouraSession, renpho: renphoSession, cacheOnly: cacheOnly)
+        await model.refreshTrends(context: context, weeks: UserDefaults.standard.integer(forKey: "weeksOfHistory").nonZero ?? 6)
         if !cacheOnly { cloud.requestBackup(context: context) }
     }
 }
@@ -166,8 +167,19 @@ struct ConnectBanner: View {
 /// The default "Today" view: headline scores for the day plus how recently
 /// each provider synced.
 struct TodayCard: View {
-    @Query(sort: \DailyMetric.day, order: .reverse) private var all: [DailyMetric]
-    @Query(sort: \CachedActivity.startDate, order: .reverse) private var activities: [CachedActivity]
+    /// Only the five headline rows, newest first — not the whole table.
+    @Query private var all: [DailyMetric]
+    /// Today's activities only.
+    @Query private var activities: [CachedActivity]
+
+    init() {
+        let keys = ["readiness", "sleep_score", "o_stress", "steps", "o_hrv"]
+        _all = Query(filter: #Predicate<DailyMetric> { keys.contains($0.metricKey) },
+                     sort: \DailyMetric.day, order: .reverse)
+        let today = Calendar.current.startOfDay(for: Date())
+        _activities = Query(filter: #Predicate<CachedActivity> { $0.startDate >= today },
+                            sort: \CachedActivity.startDate, order: .reverse)
+    }
     @AppStorage("lastUpdate.oura") private var ouraTS: Double = 0
     @AppStorage("lastUpdate.garmin") private var garminTS: Double = 0
     @AppStorage("lastUpdate.renpho") private var renphoTS: Double = 0
@@ -380,4 +392,8 @@ struct MetricTile: View {
         let pad = max((hi - lo) * 0.15, 0.5)
         return (lo - pad)...(hi + pad)
     }
+}
+
+private extension Int {
+    var nonZero: Int? { self == 0 ? nil : self }
 }
