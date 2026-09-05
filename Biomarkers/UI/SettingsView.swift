@@ -53,7 +53,7 @@ struct SettingsView: View {
                         }
                     }
                     Button("Back Up Now") {
-                        Task { await cloud.backup(context: context) }
+                        Task { await cloud.backup(context: context, full: true) }
                     }
                     .disabled(cloud.isSyncing)
                     Button("Restore from Cloud") {

@@ -18,6 +18,12 @@ struct RetroReview: View {
     @State private var showSections = false
     @State private var newSection = ""
     @FocusState private var editorFocused: Bool
+    /// The editor works on a local draft and writes to SwiftData only when
+    /// the page is left. Writing through a Binding on every keystroke
+    /// mutated the model, which refreshed the @Query of every cell and
+    /// re-rendered the whole view per character.
+    @State private var draft = ""
+    @State private var draftRowId: String?
 
     private var column: RetroColumn? { columns.first { $0.id == columnId } }
     private var reviewRows: [RetroRow] { rows.filter { !$0.excluded } }
@@ -75,7 +81,7 @@ struct RetroReview: View {
     /// Move between sections: commit text, drop the keyboard so the transition
     /// isn't fighting an active editor, then step.
     private func step(to newIndex: Int) {
-        save()
+        commit()
         editorFocused = false
         withAnimation { index = min(max(newIndex, 0), max(0, reviewRows.count - 1)) }
     }
@@ -86,7 +92,7 @@ struct RetroReview: View {
             Text("\(clampedIndex + 1) of \(reviewRows.count)")
                 .font(.caption).foregroundStyle(.secondary)
             Text(row.name).font(.title2.weight(.semibold))
-            TextEditor(text: binding(for: row))
+            TextEditor(text: $draft)
                 .font(.body)
                 .focused($editorFocused)
                 .padding(8)
@@ -94,6 +100,34 @@ struct RetroReview: View {
                 .frame(maxHeight: .infinity)
         }
         .padding()
+        .onAppear { loadDraft(for: row) }
+        .onDisappear { commit() }
+    }
+
+    private func loadDraft(for row: RetroRow) {
+        let id = RetroCell.makeId(rowId: row.id, colId: columnId)
+        draft = cells.first { $0.id == id }?.text ?? ""
+        draftRowId = row.id
+    }
+
+    /// Write the draft back to its cell if it changed. Safe to call more than
+    /// once — a second call with nothing new is a no-op, so no extra save or
+    /// backup is scheduled.
+    private func commit() {
+        guard let rowId = draftRowId else { return }
+        let id = RetroCell.makeId(rowId: rowId, colId: columnId)
+        let text = draft
+        if let existing = cells.first(where: { $0.id == id }) {
+            guard existing.text != text else { return }
+            existing.text = text
+            existing.touch()
+        } else if !text.isEmpty {
+            context.insert(RetroCell(rowId: rowId, colId: columnId, text: text))
+        } else {
+            return
+        }
+        try? context.save()
+        cloud.requestBackup(context: context)
     }
 
     private var controls: some View {
@@ -117,23 +151,6 @@ struct RetroReview: View {
         .background(.regularMaterial)
     }
 
-    private func binding(for row: RetroRow) -> Binding<String> {
-        Binding(
-            get: {
-                let id = RetroCell.makeId(rowId: row.id, colId: columnId)
-                return cells.first { $0.id == id }?.text ?? ""
-            },
-            set: { newText in
-                let id = RetroCell.makeId(rowId: row.id, colId: columnId)
-                if let existing = cells.first(where: { $0.id == id }) {
-                    existing.text = newText; existing.touch()
-                } else if !newText.isEmpty {
-                    context.insert(RetroCell(rowId: row.id, colId: columnId, text: newText))
-                }
-            }
-        )
-    }
-
     private func addSection() {
         let name = newSection.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
@@ -143,8 +160,5 @@ struct RetroReview: View {
         DispatchQueue.main.async { index = reviewRows.count - 1 }
     }
 
-    private func save() {
-        try? context.save()
-        cloud.requestBackup(context: context)
-    }
+    private func save() { commit() }
 }

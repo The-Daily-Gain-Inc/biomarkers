@@ -58,7 +58,7 @@ struct RootView: View {
             // (keyed by stable id, timestamp-arbitrated) — never delete-all.
             guard phase == .active, cloud.didRestore else { return }
             Task {
-                await cloud.restore(context: context)
+                await cloud.restore(context: context, incremental: true)
                 await cloud.backup(context: context)
             }
         }
