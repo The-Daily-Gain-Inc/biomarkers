@@ -52,7 +52,7 @@ final class DashboardModel: ObservableObject {
     static let higherIsBetter: [String: Bool] = [
         "workout_cal": true, "gym": true, "vo2": true, "fit_age": false,
         "load": true, "rhr": false, "steps": true,
-        "readiness": true, "resilience": true, "o_hrv": true, "o_stress": false, "o_activity": true, "spo2": true,
+        "readiness": true, "resilience": true, "o_hrv": true, "o_stress": false, "o_activity": true, "o_active_h": true, "spo2": true,
         "years": true, "sleep_score": true, "sleep_hours": true,
         "rp_bodyfat": false, "rp_weight": false,
         "glucose": false, "bp_sys": false, "bp_dia": false, "ear": false,
@@ -65,7 +65,7 @@ final class DashboardModel: ObservableObject {
     static func tintHex(for id: String) -> UInt32 {
         let map: [String: UInt32] = [
             "readiness": 0x2FA36B, "resilience": 0x2FA36B, "sleep_score": 0x5B6CF0, "sleep_hours": 0x5B6CF0,
-            "o_stress": 0xE0791F, "o_activity": 0x00A6A0, "steps": 0x2E8BE6,
+            "o_stress": 0xE0791F, "o_activity": 0x00A6A0, "o_active_h": 0x00A6A0, "steps": 0x2E8BE6,
             "o_hrv": 0x8A6BD6, "rhr": 0xD1477A, "vo2": 0x2FA36B, "spo2": 0x2E8BE6,
             "rp_weight": 0x00A6A0, "rp_bodyfat": 0xE0791F, "fit_age": 0x8A6BD6,
             "years": 0x2FA36B, "load": 0xD1477A, "workout_cal": 0xE0791F, "gym": 0x2E8BE6,
@@ -108,6 +108,7 @@ final class DashboardModel: ObservableObject {
         .init(id: "o_hrv", titleKey: "HRV", provider: .oura, unit: "ms"),
         .init(id: "o_stress", titleKey: "Stress", provider: .oura, unit: "h high"),
         .init(id: "o_activity", titleKey: "Oura Activity", provider: .oura),
+        .init(id: "o_active_h", titleKey: "Active Hours", provider: .oura, unit: "h"),
         .init(id: "spo2", titleKey: "Blood Oxygen %", provider: .oura, unit: "%"),
         .init(id: "years", titleKey: "Years Younger", provider: .oura, unit: "yrs"),
         .init(id: "sleep_score", titleKey: "Sleep Score", provider: .oura),
@@ -148,6 +149,7 @@ final class DashboardModel: ObservableObject {
         "o_hrv":       .init(agg: .avg,    format: { String(Int($0.rounded())) }),
         "o_stress":    .init(agg: .avg,    format: { String(format: "%.1f", $0) }),
         "o_activity":  .init(agg: .avg,    format: { String(Int($0.rounded())) }),
+        "o_active_h":  .init(agg: .avg,    format: { String(format: "%.1f", $0) }),
         "spo2":        .init(agg: .avg,    format: { String(format: "%.1f", $0) }),
         "years":       .init(agg: .latest, format: { String(format: "%+.0f", $0) }),
         "sleep_score": .init(agg: .avg,    format: { String(Int($0.rounded())) }),
@@ -553,7 +555,14 @@ final class DashboardModel: ObservableObject {
             }
         }
         if let rows = try? await client.dailyCollection("daily_activity", start: windowStart, end: qEnd) {
-            for r in rows { if let d = day(from: r), let s = (r["score"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "o_activity", value: s) } }
+            for r in rows {
+                guard let d = day(from: r) else { continue }
+                if let s = (r["score"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "o_activity", value: s) }
+                // Active hours = low + medium + high activity time (Oura reports seconds).
+                let secs = ["low_activity_time", "medium_activity_time", "high_activity_time"]
+                    .compactMap { (r[$0] as? NSNumber)?.doubleValue }
+                if !secs.isEmpty { upsert(context, day: d, key: "o_active_h", value: secs.reduce(0, +) / 3600) }
+            }
         }
         if let rows = try? await client.dailyCollection("daily_stress", start: windowStart, end: qEnd) {
             for r in rows { if let d = day(from: r), let v = (r["stress_high"] as? NSNumber)?.doubleValue { upsert(context, day: d, key: "o_stress", value: v / 3600) } }

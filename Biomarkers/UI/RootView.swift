@@ -1,17 +1,15 @@
 import SwiftUI
 import SwiftData
 
-/// Launch sequence state. Everything the tabs need is loaded up front —
-/// cloud merge, Garmin activities, dashboard metrics, trends history, HR-zone
-/// bucketing — behind a blocking progress screen, so the first minute of use
-/// isn't spent fighting background work for the main thread.
+/// Launch sequence state. Only the local cache-backed stages (dashboard
+/// render, trends matrix, HR-zone bucketing) sit behind the progress screen;
+/// all network sync runs afterwards without blocking the tabs.
 @MainActor
 final class LaunchGate: ObservableObject {
     @Published var progress: Double = 0
     @Published var text: String = ""
     @Published var done = false
-    @Published var canSkip = false
-    let totalSteps = 7
+    let totalSteps = 3
 
     func step(_ index: Int, _ text: String) {
         progress = Double(index) / Double(totalSteps)
@@ -96,53 +94,58 @@ struct RootView: View {
         }
     }
 
-    /// The whole launch pipeline, in order, with the progress bar advancing
-    /// per stage. Network stages are skipped when the cache is fresh, so a
-    /// warm launch takes a second or two.
+    /// Launch pipeline. Only the local, cache-backed stages block the gate
+    /// (render from SwiftData, trends matrix, HR zones) so the tabs appear in
+    /// well under a second. Every network stage — cloud merge, Garmin sync,
+    /// Oura/Renpho refresh, backup — runs afterwards in the background and the
+    /// views re-render from the cache as it lands.
     private func preload() async {
         guard !gate.done else { return }
-        // Never let a hung network call brick the app: after 25 s the user
-        // can continue into the tabs while the rest finishes in the background.
-        let skipTimer = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 25_000_000_000)
-            if !gate.done { gate.canSkip = true }
-        }
-        defer { skipTimer.cancel() }
 
-        gate.step(0, String(localized: "Signing in…"))
+        gate.step(0, String(localized: "Loading today's biomarkers…"))
+        await dashboard.load(context: context, garmin: session, oura: ouraSession,
+                             renpho: renphoSession, cacheOnly: true)
+
+        gate.step(1, String(localized: "Loading trends…"))
+        await dashboard.refreshTrends(context: context, weeks: weeksOfHistory, force: true)
+
+        gate.step(2, String(localized: "Crunching heart-rate zones…"))
+        await rebuildZones()
+
+        gate.step(3, String(localized: "Ready"))
+        gate.done = true
+
+        Task { await backgroundSync() }
+    }
+
+    /// Network pass, run after the gate opens. Nothing here blocks the UI;
+    /// the dashboard/trends show their own loading indicators while it runs.
+    private func backgroundSync() async {
         await cloud.signIn()
-
-        gate.step(1, String(localized: "Merging cloud data…"))
         await cloud.restore(context: context, incremental: true)
         await cloud.seed(context: context)
 
         let stale = DashboardModel.isStale()
         if session.isLoggedIn && stale {
-            gate.step(2, String(localized: "Syncing Garmin activities…"))
             await sync.sync(context: context, session: session, backfillMonths: backfillMonths)
         }
 
-        gate.step(3, String(localized: "Loading today's biomarkers…"))
+        // Re-render from the merged cache, then refresh from the providers
+        // only if the cache is stale (load() renders cache first regardless).
         await dashboard.load(context: context, garmin: session, oura: ouraSession,
                              renpho: renphoSession, cacheOnly: !stale)
-
-        gate.step(4, String(localized: "Loading trends…"))
         await dashboard.loadHistory(context: context, garmin: session, oura: ouraSession,
                                     renpho: renphoSession, weeks: weeksOfHistory, cacheOnly: !stale)
         await dashboard.refreshTrends(context: context, weeks: weeksOfHistory, force: true)
+        await rebuildZones()
 
-        gate.step(5, String(localized: "Crunching heart-rate zones…"))
+        await cloud.backup(context: context, isLaunch: true)
+    }
+
+    private func rebuildZones() async {
         let acts = (try? context.fetch(FetchDescriptor<CachedActivity>(sortBy: [SortDescriptor(\.startDate, order: .reverse)]))) ?? []
         await zoneAgg.rebuild(signature: ZoneAggregator.signature(activities: acts, maxHR: zones.maxHR),
                               activities: acts, floors: zones.floors)
-
-        gate.step(6, String(localized: "Almost there…"))
-        gate.step(7, String(localized: "Ready"))
-        gate.done = true
-
-        // Backup goes up after the UI is usable — it's the one stage that
-        // doesn't need to finish before you can read your numbers.
-        Task { await cloud.backup(context: context, isLaunch: true) }
     }
 }
 
@@ -174,11 +177,6 @@ struct LaunchLoadingView: View {
                     .padding(.horizontal, 32)
             }
             Spacer()
-            if gate.canSkip {
-                Button("Continue anyway") { gate.done = true }
-                    .buttonStyle(.bordered)
-                    .padding(.bottom, 24)
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemGroupedBackground))
