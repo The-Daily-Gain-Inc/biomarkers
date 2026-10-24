@@ -32,7 +32,7 @@ struct BiomarkersApp: App {
                 .environmentObject(dashboard)
         }
         .modelContainer(for: [
-            CachedActivity.self, DailyMetric.self,
+            CachedActivity.self, DailyMetric.self, DailyNote.self,
             RetroRow.self, RetroColumn.self, RetroCell.self, RetroDream.self, LongevityRule.self,
             WorkoutBlock.self,
         ])

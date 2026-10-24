@@ -12,7 +12,6 @@ struct DashboardView: View {
     @EnvironmentObject var model: DashboardModel
     @AppStorage("backfillMonths") private var backfillMonths = 6
     @State private var showGarminLogin = false
-    @State private var showLog = false
     @State private var mode: Mode = .today
     enum Mode: String, CaseIterable { case today = "Today", week = "Last 7 Days" }
 
@@ -84,9 +83,6 @@ struct DashboardView: View {
                 if done { Task { await reload(force: true) } }
             }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { showLog = true } label: { Label("Log", systemImage: "square.and.pencil") }
-                }
                 ToolbarItem(placement: .primaryAction) {
                     if model.isLoading || sync.isSyncing {
                         ProgressView()
@@ -98,9 +94,6 @@ struct DashboardView: View {
                         }
                     }
                 }
-            }
-            .sheet(isPresented: $showLog, onDismiss: { Task { await reload() } }) {
-                LogEntryView()
             }
         }
     }

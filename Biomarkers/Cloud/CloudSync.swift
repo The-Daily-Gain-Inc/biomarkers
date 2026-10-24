@@ -276,6 +276,9 @@ final class CloudSync: ObservableObject {
                 id: { $0.id }, data: {
                     ["day": $0.day, "metricKey": $0.metricKey, "value": $0.value, "fetchedAt": $0.fetchedAt]
                 }))
+            try await push(root.collection("dailyNotes"), await Self.changed(
+                DailyNote.self, in: container, since: since, stamp: \.updatedAt,
+                id: { $0.id }, data: { ["day": $0.day, "text": $0.text, "updatedAt": $0.updatedAt] }))
             try await push(root.collection("activities"), await Self.changed(
                 CachedActivity.self, in: container, since: since, stamp: \.fetchedAt,
                 id: { String($0.activityId) }, data: {
@@ -394,6 +397,9 @@ final class CloudSync: ObservableObject {
             }
             for doc in metricDocs {
                 let d = doc.data()
+                // Manual entries the user deleted are tombstoned so they
+                // don't come back on the next restore.
+                if handleTombstone(d, id: doc.documentID, local: existingMetrics, context: context) { continue }
                 guard let key = d["metricKey"] as? String,
                       let value = d["value"] as? Double,
                       let day = (d["day"] as? Timestamp)?.dateValue() else { continue }
@@ -404,6 +410,24 @@ final class CloudSync: ObservableObject {
                     let nm = DailyMetric(day: day, metricKey: key, value: value)
                     if let cloudAt { nm.fetchedAt = cloudAt }
                     context.insert(nm)
+                }
+            }
+            // Day notes — last-writer-wins on updatedAt, tombstones delete.
+            let notes = Dictionary((try? context.fetch(FetchDescriptor<DailyNote>()))?.map { ($0.id, $0) } ?? [],
+                                   uniquingKeysWith: { a, _ in a })
+            for doc in try await docs(root.collection("dailyNotes"), stamp: "updatedAt", since: since) {
+                let d = doc.data()
+                if handleTombstone(d, id: doc.documentID, local: notes, context: context) { continue }
+                guard let text = d["text"] as? String, let day = (d["day"] as? Timestamp)?.dateValue() else { continue }
+                if let n = notes[doc.documentID] {
+                    if cloudWins(d, localUpdatedAt: n.updatedAt) {
+                        n.text = text
+                        n.updatedAt = (d["updatedAt"] as? Timestamp)?.dateValue() ?? n.updatedAt
+                    }
+                } else {
+                    let n = DailyNote(day: day, text: text)
+                    if let at = (d["updatedAt"] as? Timestamp)?.dateValue() { n.updatedAt = at }
+                    context.insert(n)
                 }
             }
             // Retro rows/columns/cells, dreams, longevity, workouts.

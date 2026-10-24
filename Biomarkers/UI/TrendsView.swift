@@ -13,6 +13,7 @@ struct TrendsView: View {
     @AppStorage("weeksOfHistory") private var weeksOfHistory = 6
     @AppStorage("trendsHiddenCSV") private var trendsHiddenCSV = ""
     @State private var showVisibility = false
+    @State private var showLog = false
 
     private var visibleMetrics: [Metric] {
         let hidden = Set(trendsHiddenCSV.split(separator: ",").map(String.init))
@@ -64,6 +65,9 @@ struct TrendsView: View {
             }
             .navigationTitle(Text("Trends"))
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { showLog = true } label: { Label("Log", systemImage: "square.and.pencil") }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button { showVisibility = true } label: {
                         Image(systemName: "slider.horizontal.3")
@@ -72,6 +76,17 @@ struct TrendsView: View {
             }
             .sheet(isPresented: $showVisibility) {
                 MetricVisibilityEditor(hiddenCSV: $trendsHiddenCSV)
+            }
+            .sheet(isPresented: $showLog, onDismiss: {
+                // Manual values live in the same cache as everything else:
+                // recompute the dashboard grid and the trend cells from it.
+                Task {
+                    await model.load(context: context, garmin: session, oura: ouraSession,
+                                     renpho: renphoSession, cacheOnly: true)
+                    await model.refreshTrends(context: context, weeks: weeksOfHistory)
+                }
+            }) {
+                LogEntryView()
             }
             .task(id: weeksOfHistory) { await loadHistory(force: false) }
             .onChange(of: weeksOfHistory) { _, _ in Task { await loadHistory(force: true) } }
