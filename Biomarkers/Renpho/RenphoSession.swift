@@ -57,6 +57,9 @@ final class RenphoSession: ObservableObject {
             req.httpMethod = "POST"
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             req.setValue("application/json", forHTTPHeaderField: "Accept")
+            // Renpho now rejects logins without these (code -114, empty msg).
+            req.setValue(Self.appVersion, forHTTPHeaderField: "appVersion")
+            req.setValue(Self.platform, forHTTPHeaderField: "platform")
             req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
             let (data, response) = try await URLSession.shared.data(for: req)
@@ -73,7 +76,7 @@ final class RenphoSession: ObservableObject {
                   let user = RenphoCrypto.decryptResponse(encData) as? [String: Any],
                   let loginInfo = user["login"] as? [String: Any],
                   let token = loginInfo["token"] as? String else {
-                lastError = "Renpho login failed: \(msg.isEmpty ? "check email/password" : msg)"
+                lastError = "Renpho login failed: \(msg.isEmpty ? "server code \(code.map { "\($0)" } ?? "?")" : msg)"
                 DebugLog.shared.add("renpho login code=\(code ?? "nil") msg=\(msg)")
                 return
             }
