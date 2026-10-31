@@ -467,7 +467,12 @@ final class DashboardModel: ObservableObject {
     private func loadRenpho(context: ModelContext, renpho: RenphoSession) async {
         guard renpho.isConnected else { return }
         let client = RenphoClient(session: renpho)
-        guard let measurements = try? await client.measurements() else { return }
+        let measurements: [RenphoMeasurement]
+        do { measurements = try await client.measurements() }
+        catch { DebugLog.shared.add("renpho sync failed: \(error.localizedDescription)"); return }
+        let fmt = Date.FormatStyle(date: .abbreviated, time: .omitted)
+        DebugLog.shared.add("renpho sync n=\(measurements.count) "
+            + "\(measurements.first.map { $0.date.formatted(fmt) } ?? "—") → \(measurements.last.map { $0.date.formatted(fmt) } ?? "—")")
         // Sorted ascending, so the latest measurement of any day is stored last.
         for m in measurements {
             for (key, value) in m.values {
